@@ -3,7 +3,17 @@
  * 모든 함수는 부수효과가 없는 순수 변환 (입력 -> 새로운 PDF 바이트)
  */
 import { PDFDocument, degrees, rgb, StandardFonts } from 'pdf-lib'
+import fontkit from '@pdf-lib/fontkit'
 import type { Annotation } from '../../electron/shared/types'
+
+/** 커스텀 폰트 임베딩을 위해 fontkit 등록 */
+export function ensureFontkit(doc: PDFDocument): void {
+  try {
+    doc.registerFontkit(fontkit)
+  } catch {
+    /* 이미 등록된 경우 무시 */
+  }
+}
 
 /** number[] -> Uint8Array */
 function toBytes(data: number[] | Uint8Array): Uint8Array {
@@ -131,13 +141,20 @@ export async function splitPdf(
  * 주석을 PDF 에 합성
  * 화면 좌표계(원점 좌상단, y 아래로 증가) -> PDF 좌표계(원점 좌하단, y 위로 증가)
  * 변환은 호출측에서 이미 PDF 좌표계로 변환했다고 가정 (Annotation.y 는 PDF 좌표)
+ *
+ * @param customFont 커스텀 폰트 바이트(한글 지원). 없으면 Helvetica(영문만)
  */
 export async function applyAnnotations(
   data: number[] | Uint8Array,
-  annotations: Annotation[]
+  annotations: Annotation[],
+  customFont?: Uint8Array
 ): Promise<Uint8Array> {
   const doc = await PDFDocument.load(toBytes(data))
-  const font = await doc.embedFont(StandardFonts.Helvetica)
+  ensureFontkit(doc)
+  // 한글을 위해 커스텀 폰트(NanumGothic 등) 사용, 없으면 Helvetica
+  const font = customFont
+    ? await doc.embedFont(customFont, { subset: true })
+    : await doc.embedFont(StandardFonts.Helvetica)
   const pages = doc.getPages()
 
   for (const ann of annotations) {
@@ -172,15 +189,18 @@ export async function applyAnnotations(
       }
       case 'textbox': {
         const fontSize = 14
-        // pdf-lib 텍스트는 기준점이 텍스트 기준선 -> 상자 상단에서 폰트 높이만큼 내림
-        page.drawText(ann.text ?? '', {
-          x: ann.x + 4,
-          y: ann.y + 4,
-          size: fontSize,
-          font,
-          color,
-          maxWidth: ann.width - 8
-        })
+        const text = (ann.text ?? '').trim()
+        if (text) {
+          // pdf-lib 텍스트는 기준점이 텍스트 기준선 -> 상자 상단에서 폰트 높이만큼 내림
+          page.drawText(text, {
+            x: ann.x + 4,
+            y: ann.y + 4,
+            size: fontSize,
+            font,
+            color,
+            maxWidth: ann.width - 8
+          })
+        }
         // 테두리
         page.drawRectangle({
           x: ann.x,

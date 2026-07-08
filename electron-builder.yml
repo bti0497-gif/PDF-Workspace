@@ -6,6 +6,10 @@ directories:
 files:
   - out/**/*
   - package.json
+extraResources:
+  - from: assets/fonts
+    to: assets/fonts
+    filter: ['**/*.ttf']
 extraMetadata:
   main: out/main/index.js
 win:

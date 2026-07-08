@@ -136,7 +136,15 @@ async function saveCurrentDocument(saveInPlace: boolean): Promise<void> {
   if (!doc) return
 
   const { applyAnnotations } = await import('../lib/pdf-operations')
-  const finalBytes = await applyAnnotations(doc.bytes, s.annotations)
+  // 한글 폰트 로드 (주석 텍스트에 한글이 포함될 수 있음)
+  let fontBytes: Uint8Array | undefined
+  try {
+    const fontData = await window.workspace.getKoreanFont()
+    if (fontData) fontBytes = new Uint8Array(fontData)
+  } catch {
+    /* 폰트 없으면 Helvetica 폴백 */
+  }
+  const finalBytes = await applyAnnotations(doc.bytes, s.annotations, fontBytes)
 
   if (saveInPlace && doc.filePath) {
     await window.workspace.writeFile(doc.filePath, Array.from(finalBytes))

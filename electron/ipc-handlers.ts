@@ -3,6 +3,16 @@
  */
 import { ipcMain, dialog, BrowserWindow, shell } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+
+/** 번들에 포함된 한글 폰트(NanumGothic) 경로 - dev/prod 모두 동작 */
+function getFontPath(): string {
+  // dev: 프로젝트 루트/assets/fonts, prod: resources/assets/fonts
+  return join(__dirname, '../../assets/fonts/NanumGothic.ttf')
+}
 
 const PDF_FILTER = { name: 'PDF 문서', extensions: ['pdf'] }
 
@@ -76,6 +86,18 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('shell:showInFolder', async (_e, filePath: string) => {
     shell.showItemInFolder(filePath)
     return true
+  })
+
+  /** 한글 지원 폰트 바이트 반환 (주석 텍스트용) */
+  ipcMain.handle('font:getKorean', async () => {
+    try {
+      const fontPath = getFontPath()
+      const buffer = await readFile(fontPath)
+      return Array.from(new Uint8Array(buffer))
+    } catch (err) {
+      console.error('폰트 로드 실패:', err)
+      return null
+    }
   })
 
   /** 합치기 다이얼로그 - 파일 선택 후 경로 배열 반환 */

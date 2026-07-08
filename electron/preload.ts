@@ -31,6 +31,9 @@ const api = {
   showInFolder: (filePath: string): Promise<boolean> =>
     ipcRenderer.invoke('shell:showInFolder', filePath),
 
+  /** 한글 지원 폰트 바이트 반환 (주석 텍스트 렌더링용) */
+  getKoreanFont: (): Promise<number[] | null> => ipcRenderer.invoke('font:getKorean'),
+
   /** 합치기 다이얼로그 */
   mergeDialog: (): Promise<string[]> => ipcRenderer.invoke('dialog:merge'),
 
