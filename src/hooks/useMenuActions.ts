@@ -1,24 +1,26 @@
 /**
  * 메뉴/단축키 이벤트를 스토어 액션으로 라우팅
+ * - 가상 매니페스트 기반 Undo/Redo 완벽 연동
+ * - 지연 베이킹(Deferred Baking) 저장 연동
+ * - 다중 선택 페이지 일괄 회전/삭제/추출 연동
  */
 import { useCallback } from 'react'
 import { useStore } from '../lib/store'
 import { usePdfDocument } from './usePdfDocument'
-import {
-  deletePages,
-  extractPages
-} from '../lib/pdf-operations'
+import { bakeManifestToPdf, extractVirtualPagesToPdf } from '../core/services/pdf-engine.service'
 import type { MenuEvent } from '../../electron/shared/types'
 
 export function useMenuActions() {
   const store = useStore
-  const { openFile, applyRotation } = usePdfDocument()
+  const { openFile } = usePdfDocument()
 
   const handleMenuEvent = useCallback(
     async (event: MenuEvent) => {
       const s = store.getState()
       const doc = s.document
       const page = s.currentPage
+      const selectedIndices =
+        s.selectedPageIndices.length > 0 ? s.selectedPageIndices : [page]
 
       switch (event) {
         // ── 파일 ──
@@ -35,9 +37,10 @@ export function useMenuActions() {
 
         // ── 편집 ──
         case 'edit:undo':
-          // 주석 삭제를 실행 취소하는 단순 구현 (히스토리는 추후 확장)
+          s.undo()
           break
         case 'edit:redo':
+          s.redo()
           break
         case 'edit:deleteAnnotation':
           if (s.selectedAnnotationId) {
@@ -91,60 +94,60 @@ export function useMenuActions() {
 
         // ── 페이지 ──
         case 'page:rotateLeft':
-          if (doc) {
-            await applyRotation([page], 'left')
-            store.getState().rotatePages([page], 'left')
-          }
+          if (doc) s.rotatePages(selectedIndices, 'left')
           break
         case 'page:rotateRight':
-          if (doc) {
-            await applyRotation([page], 'right')
-            store.getState().rotatePages([page], 'right')
-          }
+          if (doc) s.rotatePages(selectedIndices, 'right')
           break
         case 'page:delete':
-          if (doc && doc.pageCount > 1) {
-            await deletePageAction(page)
+          if (doc && s.pages.length > selectedIndices.length) {
+            s.deletePages(selectedIndices)
           }
           break
         case 'page:extract':
           if (doc) {
-            await extractPageAction(page)
+            await extractSelectedPagesAction(selectedIndices)
           }
           break
         case 'page:previous':
           if (page > 0) s.setCurrentPage(page - 1)
           break
         case 'page:next':
-          if (doc && page < doc.pageCount - 1) s.setCurrentPage(page + 1)
+          if (doc && page < s.pages.length - 1) s.setCurrentPage(page + 1)
           break
 
         default:
           console.log('처리되지 않은 메뉴 이벤트:', event)
       }
     },
-    [openFile, applyRotation, store]
+    [openFile, store]
   )
 
   return { handleMenuEvent }
 }
 
-/** 현재 문서를 PDF로 저장 (주석 합성 포함) */
+/** 현재 가상 매니페스트를 실제 PDF로 지연 일괄 합성하여 저장 */
 async function saveCurrentDocument(saveInPlace: boolean): Promise<void> {
   const s = useStore.getState()
   const doc = s.document
   if (!doc) return
 
-  const { applyAnnotations } = await import('../lib/pdf-operations')
-  // 한글 폰트 로드 (주석 텍스트에 한글이 포함될 수 있음)
+  // 한글 폰트 로드
   let fontBytes: Uint8Array | undefined
   try {
     const fontData = await window.workspace.getKoreanFont()
     if (fontData) fontBytes = new Uint8Array(fontData)
   } catch {
-    /* 폰트 없으면 Helvetica 폴백 */
+    /* 폰트 없으면 기본 폰트 사용 */
   }
-  const finalBytes = await applyAnnotations(doc.bytes, s.annotations, fontBytes)
+
+  // 지연 베이킹 (가상 매니페스트 + 소스 바이트 + 주석 일괄 합성)
+  const finalBytes = await bakeManifestToPdf({
+    pages: s.pages,
+    sources: s.sources,
+    annotations: s.annotations,
+    customFont: fontBytes
+  })
 
   if (saveInPlace && doc.filePath) {
     await window.workspace.writeFile(doc.filePath, Array.from(finalBytes))
@@ -160,7 +163,12 @@ async function saveCurrentDocument(saveInPlace: boolean): Promise<void> {
     if (savedPath) {
       useStore.setState((prev) => ({
         document: prev.document
-          ? { ...prev.document, bytes: finalBytes, filePath: savedPath, fileName: savedPath.split(/[\\/]/).pop()! }
+          ? {
+              ...prev.document,
+              bytes: finalBytes,
+              filePath: savedPath,
+              fileName: savedPath.split(/[\\/]/).pop()!
+            }
           : null,
         isDirty: false
       }))
@@ -168,33 +176,16 @@ async function saveCurrentDocument(saveInPlace: boolean): Promise<void> {
   }
 }
 
-/** 페이지 삭제 액션 */
-async function deletePageAction(pageIndex: number): Promise<void> {
+/** 선택된 페이지들을 새 PDF로 내보내기 */
+export async function extractSelectedPagesAction(indices: number[]): Promise<void> {
   const s = useStore.getState()
   const doc = s.document
-  if (!doc) return
-  const newBytes = await deletePages(doc.bytes, [pageIndex])
-  const { clearRenderCache } = await import('./usePdfRender')
-  clearRenderCache()
-  useStore.setState({
-    document: {
-      ...doc,
-      bytes: newBytes,
-      pageCount: doc.pageCount - 1,
-      rotations: doc.rotations.filter((_, i) => i !== pageIndex)
-    },
-    annotations: s.annotations.filter((a) => a.pageIndex !== pageIndex).map((a) => (a.pageIndex > pageIndex ? { ...a, pageIndex: a.pageIndex - 1 } : a)),
-    currentPage: Math.min(s.currentPage, doc.pageCount - 2),
-    isDirty: true
-  })
-}
+  if (!doc || indices.length === 0) return
 
-/** 페이지 추출 액션 */
-async function extractPageAction(pageIndex: number): Promise<void> {
-  const s = useStore.getState()
-  const doc = s.document
-  if (!doc) return
-  const extracted = await extractPages(doc.bytes, [pageIndex])
-  const name = doc.fileName.replace(/\.pdf$/i, '')
-  await window.workspace.savePdfBytes(Array.from(extracted), `${name}_p${pageIndex + 1}.pdf`)
+  const extracted = await extractVirtualPagesToPdf(s.pages, s.sources, indices)
+  const baseName = doc.fileName.replace(/\.pdf$/i, '')
+  const suffix =
+    indices.length === 1 ? `_p${indices[0] + 1}` : `_선택${indices.length}페이지`
+
+  await window.workspace.savePdfBytes(Array.from(extracted), `${baseName}${suffix}.pdf`)
 }

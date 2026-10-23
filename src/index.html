@@ -3,8 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; worker-src 'self' blob:;" />
-    <title>PDF Workspace</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' http: ws: data: blob: file:; script-src 'self' 'unsafe-inline' 'unsafe-eval' http: file: blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: file:; worker-src 'self' blob: data: file:; connect-src 'self' ws: http: file: blob: data:;" />
+    <title>더존 PDF 편집기</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="icon" type="image/png" href="/app-icon.png" />
   </head>
   <body>
     <div id="root"></div>

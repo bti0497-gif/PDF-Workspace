@@ -1,5 +1,5 @@
 appId: com.pdfworkspace.app
-productName: PDF Workspace
+productName: 더존 PDF 편집기
 directories:
   output: dist
   buildResources: build
@@ -13,8 +13,11 @@ extraResources:
 extraMetadata:
   main: out/main/index.js
 win:
+  icon: build/icon.ico
+  executableName: 더존 PDF 편집기
   target:
     - nsis
+    - dir
     - zip
   artifactName: ${productName}-${version}-${arch}.${ext}
 nsis:
@@ -24,4 +27,4 @@ nsis:
   installerLanguages:
     - ko_KR
     - en_US
-  shortcutName: PDF Workspace
+  shortcutName: 더존 PDF 편집기

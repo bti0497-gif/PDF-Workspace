@@ -16,23 +16,27 @@ const api = {
     ipcRenderer.invoke('dialog:saveFile', defaultName),
 
   /** 경로로 파일 읽기 */
-  readFile: (filePath: string): Promise<number[]> =>
+  readFile: (filePath: string): Promise<number[] | Uint8Array> =>
     ipcRenderer.invoke('file:read', filePath),
 
   /** 경로에 파일 쓰기 */
-  writeFile: (filePath: string, data: number[]): Promise<boolean> =>
+  writeFile: (filePath: string, data: number[] | Uint8Array): Promise<boolean> =>
     ipcRenderer.invoke('file:write', filePath, data),
 
   /** PDF 바이트를 저장 (다이얼로그 + 쓰기 통합) */
-  savePdfBytes: (data: number[], suggestedName?: string): Promise<string | null> =>
+  savePdfBytes: (data: number[] | Uint8Array, suggestedName?: string): Promise<string | null> =>
     ipcRenderer.invoke('file:savePdfBytes', data, suggestedName),
+
+  /** PDF 인쇄 실행 */
+  printPdf: (data: number[] | Uint8Array): Promise<boolean> =>
+    ipcRenderer.invoke('file:printPdf', data),
 
   /** 탐색기에서 표시 */
   showInFolder: (filePath: string): Promise<boolean> =>
     ipcRenderer.invoke('shell:showInFolder', filePath),
 
   /** 한글 지원 폰트 바이트 반환 (주석 텍스트 렌더링용) */
-  getKoreanFont: (): Promise<number[] | null> => ipcRenderer.invoke('font:getKorean'),
+  getKoreanFont: (): Promise<number[] | Uint8Array | null> => ipcRenderer.invoke('font:getKorean'),
 
   /** 합치기 다이얼로그 */
   mergeDialog: (): Promise<string[]> => ipcRenderer.invoke('dialog:merge'),

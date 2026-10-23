@@ -1,12 +1,11 @@
 /**
  * PDF.js 워커 설정
- * - 워커 파일은 public/pdf.worker.min.mjs 에 위치 (postinstall 스크립트로 복사됨)
- * - 개발/프로덕션 모두 동일 경로 사용
+ * - Vite 의 ?url 기능을 통해 개발(HMR) 및 프로덕션(file:// 프로토콜) 모두 상대경로로 안전하게 자동 번들링
  */
 import { GlobalWorkerOptions, version } from 'pdfjs-dist'
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 
-// 워커 파일 경로 설정 - Vite 가 public 폴더를 루트로 서빙
-const workerPath = new URL('/pdf.worker.min.mjs', window.location.href).href
-GlobalWorkerOptions.workerSrc = workerPath
+GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
 export const pdfjsVersion = version
+

@@ -27,6 +27,8 @@ export function buildAppMenu(onMenu: MenuHandler): Menu {
           accelerator: 'CmdOrCtrl+Shift+S'
         },
         { type: 'separator' },
+        { ...send('file:print'), label: '인쇄...', accelerator: 'CmdOrCtrl+P' },
+        { type: 'separator' },
         { ...send('file:close'), label: '닫기', accelerator: 'CmdOrCtrl+W' },
         ...(isMac
           ? []
@@ -68,7 +70,10 @@ export function buildAppMenu(onMenu: MenuHandler): Menu {
         { ...send('tool:drawing'), label: '자유 그리기', accelerator: 'CmdOrCtrl+5' },
         { type: 'separator' },
         { ...send('tool:merge'), label: 'PDF 합치기...' },
-        { ...send('tool:split'), label: 'PDF 나누기...' }
+        { ...send('tool:split'), label: 'PDF 나누기...' },
+        { type: 'separator' },
+        { ...send('tool:normalize'), label: '조판 크기 일치화 (A4 통일)...' },
+        { ...send('tool:crop'), label: '여백 자르기 (Crop)...' }
       ]
     },
     // 보기(V)
@@ -136,7 +141,7 @@ export function buildAppMenu(onMenu: MenuHandler): Menu {
       label: '도움말(H)',
       role: 'help',
       submenu: [
-        { ...send('help:about'), label: 'PDF Workspace 정보' },
+        { ...send('help:about'), label: '더존 PDF 편집기 정보' },
         { ...send('help:shortcuts'), label: '단축키...' },
         { type: 'separator' },
         {
@@ -156,7 +161,7 @@ export function buildAppMenu(onMenu: MenuHandler): Menu {
     template.unshift({
       label: app.name,
       submenu: [
-        { role: 'about', label: 'PDF Workspace 정보' },
+        { role: 'about', label: '더존 PDF 편집기 정보' },
         { type: 'separator' },
         { role: 'services', label: '서비스' },
         { type: 'separator' },

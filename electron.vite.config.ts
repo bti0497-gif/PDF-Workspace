@@ -25,6 +25,10 @@ export default defineConfig({
   },
   renderer: {
     root: 'src',
+    server: {
+      port: 5873,
+      strictPort: false
+    },
     resolve: {
       alias: {
         '@renderer': resolve('src')

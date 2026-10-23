@@ -32,7 +32,9 @@ export class LRU<K, V> {
       const stale = this.map.get(firstKey)
       this.map.delete(firstKey)
       // 캔버스/이미지Bitmap 인 경우 리소스 해제
-      this.dispose(firstKey, stale)
+      if (stale !== undefined) {
+        this.dispose(firstKey, stale)
+      }
     }
   }
 

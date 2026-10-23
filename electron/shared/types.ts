@@ -7,7 +7,7 @@ export interface OpenFileResult {
   filePath: string
   fileName: string
   /** 파일의 Uint8Array (pdfjs-dist / pdf-lib 에 전달) */
-  data: number[]
+  data: number[] | Uint8Array
 }
 
 /** 페이지 회전 방향 */
@@ -70,6 +70,7 @@ export type MenuEvent =
   | 'file:open'
   | 'file:save'
   | 'file:saveAs'
+  | 'file:print'
   | 'file:close'
   | 'edit:undo'
   | 'edit:redo'
@@ -81,6 +82,8 @@ export type MenuEvent =
   | 'tool:select'
   | 'tool:merge'
   | 'tool:split'
+  | 'tool:normalize'
+  | 'tool:crop'
   | 'view:zoomIn'
   | 'view:zoomOut'
   | 'view:zoomReset'

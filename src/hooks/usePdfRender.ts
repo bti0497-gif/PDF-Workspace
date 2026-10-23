@@ -1,40 +1,55 @@
 /**
- * PDF 페이지 렌더링 훅
- * - OffscreenCanvas + Worker 활용 (가능한 경우)
- * - 렌더링 결과를 ImageBitmap 으로 캐싱 (LRU)
- * - 줌 변경 시 점진적 업데이트
+ * PDF 페이지 렌더링 훅 (포토샵 스타일 프록시 점진적 렌더링 & LRU 캐시)
+ * - 1단계: 캐시된 저해상도 프록시(이전 배율 비트맵)가 있으면 즉시 확대 렌더링 (흰 화면/지연 0%)
+ * - 2단계: 백그라운드에서 선명한 고해상도 렌더링 완료 시 부드럽게 교체
+ * - 가상 페이지 매니페스트(VirtualPage) 기반 소스 매핑
  */
 import { useEffect, useRef, useCallback } from 'react'
 import * as pdfjsLib from 'pdfjs-dist'
 import { LRU } from '../lib/lru-cache'
 import { getPdfDoc } from './usePdfDocument'
 import { useStore } from '../lib/store'
+import { ROOT_DOC_ID } from '../core/domain/document'
 
-/** 렌더링 결과 캐시 키: "페이지인덱스:줌:회전" */
-const renderCache = new LRU<string, ImageBitmap>(24)
+/** 렌더링 결과 캐시 키: "소스ID:소스페이지:줌:회전" */
+const renderCache = new LRU<string, ImageBitmap>(32)
 
-export function renderCacheKey(pageIndex: number, zoom: number, rotation: number): string {
-  return `${pageIndex}:${zoom.toFixed(2)}:${rotation}`
+export function renderCacheKey(
+  sourceDocId: string,
+  sourcePageIndex: number,
+  zoom: number,
+  rotation: number
+): string {
+  return `${sourceDocId}:${sourcePageIndex}:${zoom.toFixed(2)}:${rotation}`
 }
 
-/** 캐시에서 비트맵 조회 */
-export function getCachedBitmap(pageIndex: number, zoom: number, rotation: number) {
-  return renderCache.get(renderCacheKey(pageIndex, zoom, rotation))
+/** 캐시에서 동일 페이지의 임의의 이전 비트맵(저해상도 프록시) 조회 */
+function findProxyBitmap(
+  sourceDocId: string,
+  sourcePageIndex: number,
+  rotation: number
+): ImageBitmap | undefined {
+  const prefix = `${sourceDocId}:${sourcePageIndex}:`
+  const suffix = `:${rotation}`
+  for (const key of renderCache.keys()) {
+    if (key.startsWith(prefix) && key.endsWith(suffix)) {
+      return renderCache.get(key)
+    }
+  }
+  return undefined
 }
 
-/** 특정 페이지의 캐시 무효화 (회전/편집 후) */
-export function invalidatePage(pageIndex: number): void {
-  const keys = renderCache.keys()
-  for (const key of keys) {
-    if (key.startsWith(`${pageIndex}:`)) {
-      const [idx] = key.split(':')
+/** 특정 페이지의 캐시 무효화 */
+export function invalidatePage(sourceDocId: string, sourcePageIndex: number): void {
+  const prefix = `${sourceDocId}:${sourcePageIndex}:`
+  for (const key of renderCache.keys()) {
+    if (key.startsWith(prefix)) {
       renderCache.delete(key)
-      void idx
     }
   }
 }
 
-/** 전체 캐시 비움 (문서 변경 시) */
+/** 전체 캐시 비움 */
 export function clearRenderCache(): void {
   renderCache.clear()
 }
@@ -48,8 +63,7 @@ interface RenderParams {
 }
 
 /**
- * 단일 페이지를 캔버스에 렌더링
- * 캐시 히트 시 즉시 drawImage, 미스 시 pdfjs 렌더링 후 캐싱
+ * 단일 페이지를 캔버스에 점진적 렌더링
  */
 export async function renderPageToCanvas({
   canvas,
@@ -58,43 +72,56 @@ export async function renderPageToCanvas({
   rotation,
   signal
 }: RenderParams): Promise<{ width: number; height: number }> {
-  const doc = getPdfDoc()
+  const state = useStore.getState()
+  const vPage = state.pages[pageIndex]
+
+  const sourceDocId = vPage?.sourceDocId ?? ROOT_DOC_ID
+  const sourcePageIndex = vPage?.sourcePageIndex ?? pageIndex
+  const pageRotation = vPage?.rotation ?? rotation
+
+  const doc = getPdfDoc(sourceDocId)
   if (!doc) throw new Error('PDF 문서가 로드되지 않았습니다.')
 
   const ctx = canvas.getContext('2d', { alpha: false })
   if (!ctx) throw new Error('2D 컨텍스트를 생성할 수 없습니다.')
 
-  const page = await doc.getPage(pageIndex + 1) // pdfjs 는 1-base
-  const viewport = page.getViewport({ scale: zoom * window.devicePixelRatio, rotation })
+  const page = await doc.getPage(sourcePageIndex + 1) // pdfjs는 1-based
+  const viewport = page.getViewport({ scale: zoom * window.devicePixelRatio, rotation: pageRotation })
 
-  // 캐시 히트 확인
-  const key = renderCacheKey(pageIndex, zoom, rotation)
-  const cached = renderCache.get(key)
+  const exactKey = renderCacheKey(sourceDocId, sourcePageIndex, zoom, pageRotation)
+  const cachedExact = renderCache.get(exactKey)
 
   canvas.width = Math.floor(viewport.width)
   canvas.height = Math.floor(viewport.height)
   canvas.style.width = `${Math.floor(viewport.width / window.devicePixelRatio)}px`
   canvas.style.height = `${Math.floor(viewport.height / window.devicePixelRatio)}px`
 
-  if (cached) {
-    // 캐시된 비트맵 즉시 그리기
+  // [1단계: 정확한 캐시 히트]
+  if (cachedExact) {
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
-    ctx.drawImage(cached, 0, 0, canvas.width, canvas.height)
+    ctx.drawImage(cachedExact, 0, 0, canvas.width, canvas.height)
     return { width: viewport.width, height: viewport.height }
   }
 
-  // pdfjs 렌더링
-  ctx.fillStyle = '#ffffff'
-  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  // [2단계: 저해상도 프록시 프리뷰 즉각 렌더링 (흰 화면 방지)]
+  const proxy = findProxyBitmap(sourceDocId, sourcePageIndex, pageRotation)
+  if (proxy) {
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(proxy, 0, 0, canvas.width, canvas.height)
+  } else {
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+  }
 
+  // [3단계: 선명한 고해상도 백그라운드 렌더링]
   const renderTask = page.render({
     canvasContext: ctx,
     viewport,
     canvas
   } as Parameters<typeof page.render>[0])
 
-  // 취소 신호 연결
   if (signal) {
     signal.addEventListener('abort', () => {
       try {
@@ -108,18 +135,19 @@ export async function renderPageToCanvas({
   try {
     await renderTask.promise
 
-    // 렌더링 결과를 ImageBitmap 으로 캐싱 (createImageBitmap 지원 시)
+    // 렌더링 결과를 ImageBitmap 으로 캐싱
     if ('createImageBitmap' in window && !signal?.aborted) {
       try {
         const bitmap = await createImageBitmap(canvas)
-        renderCache.set(key, bitmap)
+        renderCache.set(exactKey, bitmap)
       } catch {
-        /* 캐싱 실패는 무시 */
+        /* noop */
       }
     }
   } catch (err) {
-    // 취소로 인한 오류는 무시
-    if ((err as Error)?.name === 'RenderingCancelledException') return { width: 0, height: 0 }
+    if ((err as Error)?.name === 'RenderingCancelledException') {
+      return { width: 0, height: 0 }
+    }
     throw err
   }
 
@@ -127,8 +155,7 @@ export async function renderPageToCanvas({
 }
 
 /**
- * 텍스트 레이어 렌더링 (선택/검색 가능하게)
- * pdfjs 4.x 의 renderTextLayer 사용
+ * 텍스트 레이어 렌더링 (선택/검색 가능)
  */
 export async function renderTextLayer(
   container: HTMLElement,
@@ -136,27 +163,33 @@ export async function renderTextLayer(
   zoom: number,
   rotation: number
 ): Promise<void> {
-  const doc = getPdfDoc()
+  const state = useStore.getState()
+  const vPage = state.pages[pageIndex]
+
+  const sourceDocId = vPage?.sourceDocId ?? ROOT_DOC_ID
+  const sourcePageIndex = vPage?.sourcePageIndex ?? pageIndex
+  const pageRotation = vPage?.rotation ?? rotation
+
+  const doc = getPdfDoc(sourceDocId)
   if (!doc) return
-  const page = await doc.getPage(pageIndex + 1)
-  const viewport = page.getViewport({ scale: zoom, rotation })
+
+  const page = await doc.getPage(sourcePageIndex + 1)
+  const viewport = page.getViewport({ scale: zoom, rotation: pageRotation })
 
   const textContent = await page.getTextContent()
   container.innerHTML = ''
   container.style.setProperty('--scale-factor', String(zoom))
 
-  // pdfjs 4.x: renderTextLayer 는 별도 모듈
-  const { renderTextLayer } = await import('pdfjs-dist/build/pdf.mjs')
-  await renderTextLayer({
+  const textLayer = new pdfjsLib.TextLayer({
     textContentSource: textContent,
     container,
     viewport
-  } as Parameters<typeof renderTextLayer>[0]).promise
+  })
+  await textLayer.render()
 }
 
 /**
- * React 컴포넌트에서 사용하는 렌더링 훅
- * canvas ref 와 페이지 정보를 받아 자동 렌더링
+ * React 컴포넌트 렌더링 훅
  */
 export function usePdfRender(
   canvasRef: React.RefObject<HTMLCanvasElement>,
@@ -170,7 +203,7 @@ export function usePdfRender(
   const render = useCallback(async () => {
     const canvas = canvasRef.current
     if (!canvas) return
-    // 이전 렌더링 취소
+
     abortRef.current?.abort()
     const controller = new AbortController()
     abortRef.current = controller

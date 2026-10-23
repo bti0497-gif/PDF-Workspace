@@ -1,7 +1,7 @@
 /**
  * IPC 핸들러 - 메인 프로세스에서 렌더러의 요청을 처리
  */
-import { ipcMain, dialog, BrowserWindow, shell } from 'electron'
+import { ipcMain, dialog, BrowserWindow, shell, app } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -30,7 +30,7 @@ export function registerIpcHandlers(): void {
     return {
       filePath,
       fileName: filePath.split(/[\\/]/).pop() ?? 'document.pdf',
-      data: Array.from(new Uint8Array(buffer))
+      data: new Uint8Array(buffer)
     }
   })
 
@@ -88,12 +88,25 @@ export function registerIpcHandlers(): void {
     return true
   })
 
+  /** PDF 인쇄 실행 (인쇄용 최신 바이트를 임시 파일로 생성 후 시스템 인쇄 및 뷰어 호출) */
+  ipcMain.handle('file:printPdf', async (_e, data: number[]) => {
+    try {
+      const tempPath = join(app.getPath('temp'), `workspace_print_${Date.now()}.pdf`)
+      await writeFile(tempPath, new Uint8Array(data))
+      await shell.openPath(tempPath)
+      return true
+    } catch (err) {
+      console.error('인쇄 실패:', err)
+      return false
+    }
+  })
+
   /** 한글 지원 폰트 바이트 반환 (주석 텍스트용) */
   ipcMain.handle('font:getKorean', async () => {
     try {
       const fontPath = getFontPath()
       const buffer = await readFile(fontPath)
-      return Array.from(new Uint8Array(buffer))
+      return new Uint8Array(buffer)
     } catch (err) {
       console.error('폰트 로드 실패:', err)
       return null

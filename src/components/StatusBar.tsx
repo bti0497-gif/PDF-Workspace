@@ -1,15 +1,19 @@
 /**
- * 하단 상태 표시줄 - 페이지 정보, 줌, 파일명
+ * 하단 상태 표시줄 - 페이지 정보, 선택 개수, 줌, 파일명
  */
 import { useStore } from '../lib/store'
 
 export function StatusBar() {
   const doc = useStore((s) => s.document)
+  const pages = useStore((s) => s.pages)
+  const selectedPageIndices = useStore((s) => s.selectedPageIndices)
   const currentPage = useStore((s) => s.currentPage)
   const setCurrentPage = useStore((s) => s.setCurrentPage)
   const zoom = useStore((s) => s.zoom)
   const isDirty = useStore((s) => s.isDirty)
   const activeTool = useStore((s) => s.activeTool)
+
+  const pageCount = pages.length > 0 ? pages.length : doc?.pageCount ?? 0
 
   const toolLabels: Record<string, string> = {
     select: '선택',
@@ -28,14 +32,19 @@ export function StatusBar() {
               className="statusbar__page-input"
               type="number"
               min={1}
-              max={doc.pageCount}
+              max={pageCount}
               value={currentPage + 1}
               onChange={(e) => {
                 const v = parseInt(e.target.value, 10)
-                if (!isNaN(v)) setCurrentPage(Math.max(0, Math.min(doc.pageCount - 1, v - 1)))
+                if (!isNaN(v)) setCurrentPage(Math.max(0, Math.min(pageCount - 1, v - 1)))
               }}
             />
-            <span>/ {doc.pageCount} 페이지</span>
+            <span>/ {pageCount} 페이지</span>
+            {selectedPageIndices.length > 1 && (
+              <span style={{ marginLeft: 8, color: 'var(--color-accent)' }}>
+                ({selectedPageIndices.length}개 선택됨)
+              </span>
+            )}
           </>
         ) : (
           <span>문서 없음</span>

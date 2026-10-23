@@ -55,32 +55,77 @@ export function MergeModal({ onClose }: Props) {
     }
     setBusy(true)
     setError(null)
+    const setLoadingProgress = useStore.getState().setLoadingProgress
+    setLoadingProgress({
+      visible: true,
+      percent: 10,
+      title: 'PDF 합치기 진행 중',
+      detail: `${files.length}개 파일을 읽고 있습니다...`
+    })
+
     try {
       // 각 파일 읽기
       const dataArrays: Uint8Array[] = []
-      for (const f of files) {
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i]
+        setLoadingProgress({
+          visible: true,
+          percent: Math.round(10 + (i / files.length) * 35),
+          title: 'PDF 합치기 진행 중',
+          detail: `파일 읽기 (${i + 1}/${files.length}): ${f.name}`
+        })
         const data = await window.workspace.readFile(f.path)
         dataArrays.push(new Uint8Array(data))
       }
+
+      setLoadingProgress({
+        visible: true,
+        percent: 55,
+        title: 'PDF 합치기 진행 중',
+        detail: 'PDF 스트림 및 페이지 트리를 결합하는 중입니다...'
+      })
       const merged = await mergePdfs(dataArrays)
+
+      setLoadingProgress({
+        visible: true,
+        percent: 75,
+        title: 'PDF 합치기 진행 중',
+        detail: '저장 위치 다이얼로그 대기 중...'
+      })
       const savedPath = await window.workspace.savePdfBytes(
-        Array.from(merged),
+        merged,
         '병합된문서.pdf'
       )
       if (savedPath) {
+        setLoadingProgress({
+          visible: true,
+          percent: 90,
+          title: 'PDF 합치기 진행 중',
+          detail: '병합된 문서를 뷰어에 로드 중...'
+        })
         // 병합 결과를 뷰어에 로드
         const { loadPdfFromBytes } = await import('../../hooks/usePdfDocument')
-        const meta = await loadPdfFromBytes(
+        const { meta, dimensions } = await loadPdfFromBytes(
           merged,
           savedPath.split(/[\\/]/).pop()!,
           savedPath
         )
         clearRenderCache()
-        useStore.getState().setDocument(meta)
+        useStore.getState().setDocument(meta, dimensions)
+        setLoadingProgress({
+          visible: true,
+          percent: 100,
+          title: '합치기 완료',
+          detail: '성공적으로 병합되었습니다.'
+        })
+        setTimeout(() => setLoadingProgress(null), 300)
         onClose()
+      } else {
+        setLoadingProgress(null)
       }
     } catch (err) {
       console.error(err)
+      setLoadingProgress(null)
       setError('합치기 중 오류가 발생했습니다.')
     } finally {
       setBusy(false)

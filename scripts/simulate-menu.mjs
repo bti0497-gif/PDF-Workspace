@@ -125,6 +125,40 @@ async function applyAnnotations(data, annotations, customFont) {
   return doc.save()
 }
 
+/** Phase 4: 원본 텍스트 소거(Whiteout) 및 나눔고딕 한글 대체 렌더링 */
+async function applyTextReplacements(data, replacements, customFont) {
+  const doc = await PDFDocument.load(toBytes(data))
+  doc.registerFontkit(fontkit)
+  const font = customFont
+    ? await doc.embedFont(customFont, { subset: true })
+    : await doc.embedFont(StandardFonts.Helvetica)
+  const pages = doc.getPages()
+
+  for (const r of replacements) {
+    const page = pages[r.pageIndex]
+    if (!page) continue
+    const color = hexToRgb(r.color)
+    // 1) 원본 영역 화이트아웃 소거
+    page.drawRectangle({
+      x: r.x - 1,
+      y: r.y - 1,
+      width: r.width + 2,
+      height: r.height + 2,
+      color: rgb(1, 1, 1),
+      opacity: 1
+    })
+    // 2) 수정된 텍스트 나눔고딕으로 벡터 재배치
+    page.drawText(r.newText, {
+      x: r.x,
+      y: r.y,
+      size: r.fontSize,
+      font,
+      color
+    })
+  }
+  return doc.save()
+}
+
 // ── 헬퍼 ──
 const log = (icon, msg) => console.log(`  ${icon} ${msg}`)
 const save = async (name, bytes) => {
@@ -242,12 +276,25 @@ async function main() {
   assert(finalInfo.rot[0] === 180, `최종본 회전 ${finalInfo.rot[0]}° 유지`)
   log('💾', '7_최종저장_회전+주석.pdf 저장 완료')
 
+  // ── [Phase 4: 본문 텍스트 인라인 직접 편집 (소거 & 나눔고딕 재배치)] ──
+  console.log('\n── [Phase 4: 본문 텍스트 직접 편집 (Whiteout & Redraw)] ──')
+  const textEdits = [
+    { pageIndex: 0, x: 50, y: ph - 100, width: 120, height: 16, newText: '수정된 매출세금계산서', fontSize: 13, color: '#0e6fd6' },
+    { pageIndex: 0, x: 200, y: ph - 100, width: 80, height: 16, newText: '공급자 정정완료', fontSize: 12, color: '#e5534b' }
+  ]
+  const textReplacedPdf = await applyTextReplacements(orig, textEdits, koreanFontBytes)
+  const tri = await info(textReplacedPdf, '텍스트 직접 편집본')
+  assert(tri.pages === origInfo.pages, `텍스트 편집 후 페이지 수 유지 ${tri.pages}`)
+  assert(textReplacedPdf.length > 0, `본문 텍스트 화이트아웃 소거 및 나눔고딕 합성 성공 (${(textReplacedPdf.length / 1024).toFixed(0)} KB)`)
+  await save('8_텍스트직접수정_나눔고딕.pdf', textReplacedPdf)
+  log('✍️', '8_텍스트직접수정_나눔고딕.pdf 저장 완료')
+
   // ── 결과 요약 ──
   console.log('\n════════════════════════════════════════════════')
   console.log(`  통과 ${pass} / 실패 ${fail}`)
   console.log('════════════════════════════════════════════════')
   console.log('  생성된 파일 (test-output/ 폴더):')
-  const files = ['1_회전_오른쪽.pdf','1_회전_왼쪽복구.pdf','1_회전_180도.pdf','2_복제_원본x3.pdf','2_삭제_첫페이지.pdf','3_추출_첫페이지.pdf','4_합치기.pdf','5_나누기_1.pdf','5_나누기_2.pdf','5_나누기_3.pdf','6_주석_적용.pdf','7_최종저장_회전+주석.pdf']
+  const files = ['1_회전_오른쪽.pdf','1_회전_왼쪽복구.pdf','1_회전_180도.pdf','2_복제_원본x3.pdf','2_삭제_첫페이지.pdf','3_추출_첫페이지.pdf','4_합치기.pdf','5_나누기_1.pdf','5_나누기_2.pdf','5_나누기_3.pdf','6_주석_적용.pdf','7_최종저장_회전+주석.pdf','8_텍스트직접수정_나눔고딕.pdf']
   for (const f of files) {
     const st = await readFile(`${OUT}/${f}`)
     console.log(`    • ${f.padEnd(30)} ${(st.length / 1024).toFixed(1)} KB`)
