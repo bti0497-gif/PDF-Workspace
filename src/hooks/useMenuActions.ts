@@ -54,19 +54,11 @@ export function useMenuActions() {
           break
         case 'file:save':
         case 'file:saveAs':
-          await saveCurrentDocument(event === 'file:save')
+          try { await saveCurrentDocument(event === 'file:save') }
+          catch (err) { alert(`저장하지 못했습니다. 원본은 변경하지 않았습니다.\n${err instanceof Error ? err.message : String(err)}`) }
           break
         case 'file:close':
-          if (store.getState().isDirty) {
-            if (
-              !window.confirm(
-                '저장하지 않은 변경 사항이 있습니다. 저장하지 않고 문서를 닫으시겠습니까?'
-              )
-            ) {
-              break
-            }
-          }
-          store.getState().setDocument(null)
+          window.dispatchEvent(new Event('workspace:close-document'))
           break
 
         // ── 편집 ──
@@ -165,10 +157,19 @@ export function useMenuActions() {
 }
 
 /** 현재 가상 매니페스트를 실제 PDF로 지연 일괄 합성하여 저장 */
-async function saveCurrentDocument(saveInPlace: boolean): Promise<void> {
+let pendingSave: Promise<boolean> | null = null
+
+/** True only after an actual successful save with no newer unsaved edits. */
+export function saveCurrentDocument(saveInPlace: boolean): Promise<boolean> {
+  if (pendingSave) return pendingSave
+  pendingSave = performSaveCurrentDocument(saveInPlace).finally(() => { pendingSave = null })
+  return pendingSave
+}
+
+async function performSaveCurrentDocument(saveInPlace: boolean): Promise<boolean> {
   const s = useStore.getState()
   const doc = s.document
-  if (!doc) return
+  if (!doc) return false
 
   // 한글 폰트 로드
   let fontBytes: Uint8Array | undefined
@@ -185,34 +186,33 @@ async function saveCurrentDocument(saveInPlace: boolean): Promise<void> {
     sources: s.sources,
     annotations: s.annotations,
     customFont: fontBytes,
-    metadata: s.metadata
+    metadata: s.metadata,
+    bookmarks: s.bookmarks
   })
 
-  if (saveInPlace && doc.filePath) {
-    await window.workspace.writeFile(doc.filePath, Array.from(finalBytes))
-    useStore.setState((prev) => ({
-      document: prev.document ? { ...prev.document, bytes: finalBytes } : null,
-      isDirty: false
-    }))
+  // Text replacement can flatten a page: never silently overwrite the source.
+  const hasTextEdits = s.pages.some(p => (p.textReplacements?.length ?? 0) > 0)
+  let savedPath: string | null
+  if (saveInPlace && doc.filePath && !hasTextEdits && !doc.filePath.startsWith('browser:')) {
+    const written = await window.workspace.writeFile(doc.filePath, Array.from(finalBytes))
+    if (!written) throw new Error('파일 쓰기가 완료되지 않았습니다.')
+    savedPath = doc.filePath
   } else {
-    const savedPath = await window.workspace.savePdfBytes(
+    savedPath = await window.workspace.savePdfBytes(
       Array.from(finalBytes),
-      doc.fileName
+      hasTextEdits ? doc.fileName.replace(/\.pdf$/i, '') + '_텍스트수정.pdf' : doc.fileName
     )
-    if (savedPath) {
-      useStore.setState((prev) => ({
-        document: prev.document
-          ? {
-              ...prev.document,
-              bytes: finalBytes,
-              filePath: savedPath,
-              fileName: savedPath.split(/[\\/]/).pop()!
-            }
-          : null,
-        isDirty: false
-      }))
-    }
   }
+  if (!savedPath) return false // save dialog cancelled: keep the document open
+  const current = useStore.getState()
+  if (current.document !== doc) return false // another document replaced this one
+  const unchanged = current.pages === s.pages && current.annotations === s.annotations &&
+    current.bookmarks === s.bookmarks && current.metadata === s.metadata
+  useStore.setState({
+    document: { ...doc, bytes: finalBytes, filePath: savedPath, fileName: savedPath.split(/[\\/]/).pop()! },
+    isDirty: !unchanged
+  })
+  return unchanged
 }
 
 /** 선택된 페이지들을 새 PDF로 내보내기 */

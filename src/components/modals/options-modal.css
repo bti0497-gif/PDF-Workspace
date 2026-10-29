@@ -1,0 +1,20 @@
+.modal.appearance-options { width: 540px; min-width: 0; max-width: calc(100vw - 32px); max-height: 90vh; }
+.appearance-options__body { display: flex; flex-direction: column; gap: 14px; }
+.appearance-options fieldset { margin: 0; padding: 12px 16px; border: 1px solid var(--color-border); border-radius: 6px; min-width: 0; }
+.appearance-options legend { padding: 0 6px; font-size: 13px; font-weight: 600; }
+.appearance-options__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 34px; font-size: 13px; }
+.appearance-options__row select { min-width: 120px; padding: 5px 8px; color: var(--color-text); background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 4px; }
+.appearance-options__range, .appearance-options__custom { display: flex; align-items: center; gap: 10px; }
+.appearance-options__range input { width: 150px; }
+.appearance-options output { min-width: 52px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
+.appearance-options__hint { margin: 0; font-size: 12px; line-height: 1.6; color: var(--color-text-muted); }
+.appearance-options__color-label { margin: 12px 0 8px; font-size: 13px; }
+.appearance-options__colors { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.appearance-options__color { display: flex; align-items: center; gap: 5px; padding: 5px 8px; color: var(--color-text); background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 4px; cursor: pointer; }
+.appearance-options__color span { width: 13px; height: 13px; border-radius: 3px; }
+.appearance-options__color[aria-pressed=true] { outline: 2px solid var(--color-accent, #1765a8); outline-offset: 1px; }
+.appearance-options__custom input { width: 36px; height: 26px; padding: 0; border: 0; background: transparent; }
+.appearance-options__sample { display: flex; align-items: center; gap: 8px; border: 2px solid; padding: 8px; margin: 8px 0; border-radius: 4px; font-size: 12px; }
+.appearance-options__sample span { display: inline-block; width: 12px; height: 12px; border-radius: 2px; }
+.thumbnail-controls__selection-menu { max-width: 110px; padding: 3px 4px; font-size: 11px; color: var(--color-text); background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 4px; }
+@media (max-width: 440px) { .appearance-options__range input { width: 90px; } }

@@ -7,6 +7,7 @@ interface Props {
 
 const SHORTCUTS: { category: string; keys: string; action: string }[] = [
   { category: '파일', keys: 'Ctrl+O', action: '파일 열기' },
+  { category: '파일', keys: 'Ctrl+W', action: '문서만 닫기 (수정 시 저장 확인)' },
   { category: '파일', keys: 'Ctrl+S', action: '문서 저장' },
   { category: '파일', keys: 'Ctrl+Shift+S', action: '다른 이름으로 저장' },
   { category: '파일', keys: 'Ctrl+P', action: '인쇄 및 인쇄 내보내기' },

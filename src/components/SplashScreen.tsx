@@ -5,7 +5,8 @@
  * - 100% 완료 시 부드러운 페이드아웃 효과 후 메인 작업 화면으로 전환
  */
 import { useEffect, useState } from 'react'
-import splashLogo from '../assets/splash-logo.png'
+import splashBrand from '../assets/splash-brand.png'
+import splashTitle from '../assets/splash-title.png'
 import { warmupPdfEngine } from '../core/services/warmup.service'
 
 interface Props {
@@ -54,28 +55,33 @@ export function SplashScreen({ onComplete }: Props) {
       className={`splash-screen ${isFading ? 'splash-screen--fading' : ''}`}
       aria-label="더존 PDF 편집기 초기화 화면"
     >
-      <div className="splash-screen__content">
-        {/* 회사 로고 카드 */}
-        <div className="splash-screen__card-wrapper">
-          <img
-            src={splashLogo}
-            alt="더존 PDF 편집기"
-            className="splash-screen__logo-card"
-          />
-        </div>
+      <SplashCard progress={progress} message={message} />
+    </div>
+  )
+}
 
-        {/* 하단 프로그래스 바 및 진행 상태 */}
+/** 초기화와 미리보기에서 같은 카드 마크업을 사용합니다. */
+export function SplashCard({ progress, message }: { progress: number; message: string }) {
+  const value = Math.max(0, Math.min(100, progress))
+  return (
+    <div className="splash-screen__content">
+      <div className="splash-screen__card-wrapper">
+        <img src={splashBrand} alt="회사 로고" className="splash-screen__brand" />
+        <img src={splashTitle} alt="더존 PDF 편집기" className="splash-screen__title" />
         <div className="splash-screen__progress-box">
-          <div className="splash-screen__track">
-            <div
-              className="splash-screen__bar"
-              style={{ width: `${progress}%` }}
-            />
+          <div className="splash-screen__message" role="status" title={message}>
+            {value >= 100 ? '초기화 완료' : '초기화 중...'}
           </div>
-
-          <div className="splash-screen__status-row">
-            <span className="splash-screen__message">{message}</span>
-            <span className="splash-screen__percent">{progress}%</span>
+          <div
+            className="splash-screen__track"
+            role="progressbar"
+            aria-label="앱 초기화 진행률"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={value}
+            aria-valuetext={`${message} ${value}%`}
+          >
+            <div className="splash-screen__bar" style={{ width: `${value}%` }} />
           </div>
         </div>
       </div>

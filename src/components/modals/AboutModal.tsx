@@ -1,7 +1,10 @@
 /**
  * 정보 모달 (자동 업데이트 확인 기능 포함)
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { version as appVersion } from '../../../package.json'
+import { useStore } from '../../lib/store'
+import type { UpdateCheckResult } from '../../../electron/shared/types'
 import { pdfjsVersion } from '../../lib/pdf-worker'
 import splashLogo from '../../assets/splash-logo.png'
 
@@ -10,46 +13,58 @@ interface Props {
 }
 
 export function AboutModal({ onClose }: Props) {
-  const [checking, setChecking] = useState(false)
-  const [updateMsg, setUpdateMsg] = useState<string | null>(null)
+  const [updateState, setUpdateState] = useState<UpdateCheckResult>({ status: 'idle' })
+  const [installing, setInstalling] = useState(false)
+  const eventSequence = useRef(0)
+  const checking = ['checking', 'available', 'downloading'].includes(updateState.status)
+  const updateMsg = updateState.message || ({
+    checking: '업데이트 서버를 확인하고 있습니다.',
+    available: '새 버전을 찾았습니다. 자동 다운로드를 시작합니다.',
+    'not-available': '현재 최신 버전을 사용 중입니다.',
+    downloading: '새 버전 다운로드 중: ' + (updateState.percent ?? 0) + '%',
+    downloaded: '새 버전 ' + (updateState.version ?? '') + ' 다운로드 완료. 문서를 저장한 뒤 재시작하여 적용하세요.',
+    restarting: '업데이트를 적용하고 재시작합니다.',
+    error: '업데이트 처리 중 오류가 발생했습니다.'
+  } as Record<string, string>)[updateState.status]
 
   useEffect(() => {
-    // 실시간 업데이트 진행 상태 수신
+    let active = true
+    const initialSequence = eventSequence.current
     const unsubscribe = window.workspace.onUpdaterStatus?.((data) => {
-      if (data.status === 'available') {
-        setUpdateMsg(`새 버전(v${data.version})이 발견되어 다운로드를 시작합니다.`)
-      } else if (data.status === 'not-available') {
-        setUpdateMsg('현재 최신 버전을 사용 중입니다.')
-        setChecking(false)
-      } else if (data.status === 'downloading') {
-        setUpdateMsg(`새 버전 다운로드 중... (${data.percent ?? 0}%)`)
-      } else if (data.status === 'downloaded') {
-        setUpdateMsg(`새 버전(v${data.version}) 다운로드가 완료되었습니다. 앱 종료 시 자동 적용됩니다.`)
-        setChecking(false)
-      } else if (data.status === 'error') {
-        setUpdateMsg(data.message || '업데이트 확인 중 오류가 발생했습니다.')
-        setChecking(false)
-      }
+      eventSequence.current++
+      if (data.status === 'error') setInstalling(false)
+      setUpdateState(data)
     })
-    return () => {
-      unsubscribe?.()
-    }
+    void window.workspace.getUpdateStatus?.().then((data) => {
+      if (active && eventSequence.current === initialSequence) setUpdateState(data)
+    }).catch(() => {})
+    return () => { active = false; unsubscribe?.() }
   }, [])
 
   const handleCheckUpdate = async () => {
-    setChecking(true)
-    setUpdateMsg('업데이트 서버 확인 중...')
+    const sequence = eventSequence.current
+    setUpdateState((old) => ({ ...old, status: 'checking', message: undefined }))
     try {
-      const res = await window.workspace.checkForUpdates?.()
-      if (res?.message) {
-        setUpdateMsg(res.message)
-      }
-      if (res?.status === 'dev' || res?.status === 'web') {
-        setChecking(false)
-      }
-    } catch (err: any) {
-      setUpdateMsg(`확인 오류: ${err?.message || String(err)}`)
-      setChecking(false)
+      const result = await window.workspace.checkForUpdates()
+      if (eventSequence.current === sequence) setUpdateState(result)
+    } catch (error: any) {
+      setUpdateState((old) => ({ ...old, status: 'error', message: error?.message || String(error) }))
+    }
+  }
+  const handleInstallUpdate = async () => {
+    const current = useStore.getState()
+    if (current.isDirty || current.isLoading) {
+      setUpdateState((old) => ({ ...old, message: '편집한 문서를 먼저 저장하고 진행 중인 작업이 끝난 뒤 적용해 주세요.' }))
+      return
+    }
+    setInstalling(true)
+    try {
+      const result = await window.workspace.installUpdate()
+      setUpdateState(result)
+      if (result.status !== 'restarting') setInstalling(false)
+    } catch (error: any) {
+      setInstalling(false)
+      setUpdateState((old) => ({ ...old, status: 'error', message: error?.message || String(error) }))
     }
   }
 
@@ -72,7 +87,7 @@ export function AboutModal({ onClose }: Props) {
           </div>
           <h2 style={{ marginBottom: 4 }}>더존 PDF 편집기</h2>
           <p style={{ color: 'var(--color-text-muted)', marginBottom: 18 }}>
-            버전 1.0.1
+            버전 {appVersion}
           </p>
           <div
             style={{
@@ -93,7 +108,7 @@ export function AboutModal({ onClose }: Props) {
             <button
               className="btn btn--secondary"
               onClick={handleCheckUpdate}
-              disabled={checking}
+              disabled={checking || installing}
               style={{
                 width: '100%',
                 display: 'flex',
@@ -105,6 +120,15 @@ export function AboutModal({ onClose }: Props) {
               <span>{checking ? '⏳' : '🔄'}</span>
               <span>{checking ? '업데이트 확인 중...' : '최신 업데이트 확인'}</span>
             </button>
+            {updateState.readyToInstall && (
+              <button className="btn btn--primary" onClick={handleInstallUpdate} disabled={installing}
+                style={{ width: '100%', marginTop: 8 }}>
+                {installing ? '재시작 준비 중...' : '재시작하여 업데이트 적용'}
+              </button>
+            )}
+            <p style={{ marginTop: 8, fontSize: 11, color: 'var(--color-text-muted)' }}>
+              새 버전은 자동 다운로드하며, 설치는 저장 후 재시작을 선택할 때만 진행됩니다.
+            </p>
             {updateMsg && (
               <div
                 style={{

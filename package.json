@@ -1,17 +1,18 @@
 {
   "name": "pdf-workspace",
-  "version": "1.0.1",
+  "version": "1.0.5",
   "description": "PDF Workspace - PDF 뷰어/편집기",
   "main": "./out/main/index.js",
   "author": "PDF Workspace",
   "type": "module",
   "scripts": {
     "dev": "electron-vite dev --debug",
-    "build": "electron-vite build",
+    "build": "node scripts/prepare-edit-font.cjs && electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
-    "build:win": "electron-vite build && electron-builder --win",
-    "postinstall": "node scripts/copy-pdf-worker.js"
+    "build:win": "node scripts/prepare-edit-font.cjs && electron-vite build && electron-builder --win --publish never",
+    "postinstall": "node scripts/copy-pdf-worker.js && node scripts/prepare-edit-font.cjs",
+    "test:regression": "node scripts/run-regressions.cjs"
   },
   "dependencies": {
     "@pdf-lib/fontkit": "^1.1.1",

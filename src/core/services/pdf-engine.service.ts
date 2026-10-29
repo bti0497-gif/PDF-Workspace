@@ -6,6 +6,8 @@
  */
 import { PDFDocument, degrees, rgb, StandardFonts } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
+import { rasterizedTextSource } from './text-raster-save'
+import { writePdfBookmarks } from './bookmark-persistence'
 import type * as pdfjsLib from 'pdfjs-dist'
 import type { VirtualPage } from '../domain/page'
 import type { SourceDocument } from '../domain/document'
@@ -33,8 +35,9 @@ export async function bakeManifestToPdf(params: {
   annotations?: Annotation[]
   customFont?: Uint8Array
   metadata?: DocumentMetadata
+  bookmarks?: BookmarkNode[]
 }): Promise<Uint8Array> {
-  const { pages, sources, annotations = [], customFont, metadata } = params
+  const { pages, sources, annotations = [], customFont, metadata, bookmarks } = params
 
   if (pages.length === 0) {
     throw new Error('저장할 페이지가 없습니다.')
@@ -56,11 +59,17 @@ export async function bakeManifestToPdf(params: {
 
   // 가상 페이지 순서대로 dstDoc에 복사 및 회전/정규화/크롭 적용
   for (const vPage of pages) {
-    const srcDoc = loadedSources.get(vPage.sourceDocId)
+    let srcDoc = loadedSources.get(vPage.sourceDocId)
     if (!srcDoc) continue
     if (vPage.sourcePageIndex < 0 || vPage.sourcePageIndex >= srcDoc.getPageCount()) continue
 
-    const srcPage = srcDoc.getPages()[vPage.sourcePageIndex]
+    let sourceIndex = vPage.sourcePageIndex
+    if (vPage.textReplacements?.length) {
+      if (!customFont) throw new Error('본문 교체 저장에는 편집용 한글 폰트가 필요합니다.')
+      srcDoc = await rasterizedTextSource(sources.get(vPage.sourceDocId)!.bytes, vPage)
+      sourceIndex = 0
+    }
+    const srcPage = srcDoc.getPages()[sourceIndex]
     const { width: srcW, height: srcH } = srcPage.getSize()
 
     if (vPage.normalizedConfig) {
@@ -118,18 +127,16 @@ export async function bakeManifestToPdf(params: {
       }
     } else {
       // 일반 복사
-      const [copied] = await dstDoc.copyPages(srcDoc, [vPage.sourcePageIndex])
-      if (vPage.rotation !== 0) {
-        const current = copied.getRotation().angle
-        copied.setRotation(degrees((current + vPage.rotation + 360) % 360))
-      }
+      const [copied] = await dstDoc.copyPages(srcDoc, [sourceIndex])
+      copied.setRotation(degrees((vPage.rotation + 360) % 360))
       if (vPage.cropMargins) {
         const { left, bottom, right, top } = vPage.cropMargins
+        const box = copied.getCropBox()
         copied.setCropBox(
-          left,
-          bottom,
-          Math.max(10, srcW - left - right),
-          Math.max(10, srcH - top - bottom)
+          box.x + left,
+          box.y + bottom,
+          Math.max(10, box.width - left - right),
+          Math.max(10, box.height - top - bottom)
         )
       }
       dstDoc.addPage(copied)
@@ -147,7 +154,9 @@ export async function bakeManifestToPdf(params: {
   let embeddedFont: Awaited<ReturnType<typeof dstDoc.embedFont>> | null = null
   if (annotations.length > 0 || hasTextReplacements || hasWatermarks || hasPageNumbers) {
     embeddedFont = customFont
-      ? await dstDoc.embedFont(customFont, { subset: true })
+      // fontkit subsetting can omit glyph outlines for this Korean TTF.
+      // Embed the complete font so saved text actually renders, not only extracts.
+      ? await dstDoc.embedFont(customFont, { subset: false })
       : await dstDoc.embedFont(StandardFonts.Helvetica)
   }
 
@@ -161,31 +170,22 @@ export async function bakeManifestToPdf(params: {
       if (!page || !vPage.textReplacements || vPage.textReplacements.length === 0) continue
 
       for (const tr of vPage.textReplacements) {
-        const bgCol = tr.backgroundColor ? hexToRgb(tr.backgroundColor) : rgb(1, 1, 1)
         const fontSize = tr.fontSize || 12
         const whiteoutW = tr.origPdfWidth ?? tr.pdfWidth
-        const whiteoutH = fontSize * 1.06
-        const whiteoutY = tr.pdfY - fontSize * 0.18
-
-        // 원본 텍스트 소거 (Whiteout)
-        page.drawRectangle({
-          x: tr.pdfX - 1,
-          y: whiteoutY,
-          width: whiteoutW + 2,
-          height: whiteoutH,
-          color: bgCol,
-          opacity: 1
-        })
+        // Original text was removed from the explicitly consented raster source above.
 
         // 새 텍스트 합성
         if (tr.newText && fontToUse) {
           const textColor = hexToRgb(tr.color || '#000000')
           let textW = 0
+          const supported = new Set(fontToUse.getCharacterSet())
+          if ([...tr.newText].some(c => !supported.has(c.codePointAt(0)!))) throw new Error('대체 폰트에 없는 문자가 포함되어 있습니다.')
           try {
             textW = fontToUse.widthOfTextAtSize(tr.newText, fontSize)
           } catch {
-            textW = tr.newText.length * fontSize * 0.6
+            throw new Error('대체 폰트로 표현할 수 없는 문자가 포함되어 있습니다.')
           }
+          if (textW > whiteoutW + 0.1) throw new Error('수정 문구가 원래 범위를 넘습니다. 문구 또는 글자 크기를 조절하세요.')
 
           let drawX = tr.pdfX
           if (tr.align === 'center') {
@@ -412,18 +412,8 @@ export async function bakeManifestToPdf(params: {
           }
           break
         }
-        case 'redaction': {
-          // 민감정보 먹줄 영구 마스킹 (100% 불투명 솔리드 블록)
-          page.drawRectangle({
-            x: ann.x,
-            y: ph - (ann.y ?? 0) - (ann.height ?? 0),
-            width: ann.width,
-            height: ann.height,
-            color: hexToRgb(ann.color || '#000000'),
-            opacity: 1
-          })
-          break
-        }
+        default:
+          throw new Error('지원하지 않는 주석이 있어 저장을 중단했습니다.')
       }
     }
   }
@@ -442,6 +432,7 @@ export async function bakeManifestToPdf(params: {
     if (metadata.creator !== undefined) dstDoc.setCreator(metadata.creator)
   }
 
+  if (bookmarks) writePdfBookmarks(dstDoc, bookmarks, pages)
   return dstDoc.save()
 }
 
@@ -494,7 +485,7 @@ export async function parsePdfBookmarks(
           if (typeof explicitDest === 'string') {
             explicitDest = await pdfDoc.getDestination(explicitDest)
           }
-          if (Array.isArray(explicitDest) && explicitDest[0]) {
+          if (Array.isArray(explicitDest) && explicitDest.length > 0) {
             const ref = explicitDest[0]
             if (typeof ref === 'object') {
               targetPageIndex = await pdfDoc.getPageIndex(ref)

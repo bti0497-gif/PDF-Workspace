@@ -13,8 +13,7 @@ const TYPE_CONFIG: Record<AnnotationType, { label: string; icon: string }> = {
   rectangle: { label: '사각형', icon: '▭' },
   textbox: { label: '텍스트', icon: 'T' },
   drawing: { label: '펜 그리기', icon: '✎' },
-  stamp: { label: '도장/서명', icon: '💮' },
-  redaction: { label: '먹줄 마스킹', icon: '⬛' }
+  stamp: { label: '도장/서명', icon: '💮' }
 }
 
 export function AnnotationListPanel() {
@@ -193,8 +192,7 @@ export function AnnotationListPanel() {
                       >
                         {ann.text ? (
                           `"${ann.text}"`
-                        ) : ann.type === 'redaction' ? (
-                          `영구 먹줄 (${Math.round(ann.width)}×${Math.round(ann.height)}pt)`
+
                         ) : (
                           `${Math.round(ann.width)}×${Math.round(ann.height)}pt`
                         )}

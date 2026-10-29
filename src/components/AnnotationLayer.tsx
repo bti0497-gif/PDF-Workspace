@@ -54,7 +54,7 @@ export function AnnotationLayer({ pageIndex, zoom }: Props) {
   const pageAnnotations = annotations.filter((a) => a.pageIndex === pageIndex)
   const selectedAnn = pageAnnotations.find((a) => a.id === selectedAnnotationId)
 
-  const isDrawingTool = activeTool !== 'select'
+  const isDrawingTool = ['highlight', 'rectangle', 'textbox', 'drawing'].includes(activeTool)
 
   /** 마우스 위치를 레이어 내 로컬 좌표로 변환 */
   const getLocalPos = useCallback((e: React.MouseEvent | MouseEvent) => {
@@ -76,7 +76,7 @@ export function AnnotationLayer({ pageIndex, zoom }: Props) {
       return
     }
 
-    if (activeTool !== 'select') {
+    if (isDrawingTool) {
       setDrag({
         mode: 'create',
         startX: pos.x,
@@ -221,9 +221,9 @@ export function AnnotationLayer({ pageIndex, zoom }: Props) {
           y: y / zoom,
           width: w / zoom,
           height: h / zoom,
-          color: activeTool === 'redaction' && toolColor === '#ffeb3b' ? '#000000' : toolColor,
+          color: toolColor,
           strokeWidth: toolStrokeWidth,
-          opacity: activeTool === 'redaction' ? 1 : toolOpacity,
+          opacity: toolOpacity,
           fontSize: toolFontSize,
           points:
             activeTool === 'drawing'
@@ -379,34 +379,6 @@ export function AnnotationLayer({ pageIndex, zoom }: Props) {
                   strokeLinecap="round"
                 />
               )}
-              {ann.type === 'redaction' && (
-                <g>
-                  <rect
-                    x={ax}
-                    y={ay}
-                    width={aw}
-                    height={ah}
-                    fill={ann.color || '#000000'}
-                    fillOpacity={1}
-                  />
-                  {aw >= 50 && ah >= 16 && (
-                    <text
-                      x={ax + aw / 2}
-                      y={ay + ah / 2 + 4}
-                      textAnchor="middle"
-                      fill="#ffffff"
-                      fontSize={Math.min(11, Math.max(8, 9 * zoom))}
-                      fontFamily="sans-serif"
-                      fontWeight={600}
-                      letterSpacing="0.05em"
-                      pointerEvents="none"
-                      opacity={0.8}
-                    >
-                      ██ 마스킹
-                    </text>
-                  )}
-                </g>
-              )}
               {isSelected && (
                 <rect
                   x={ax - 3}
@@ -453,19 +425,6 @@ export function AnnotationLayer({ pageIndex, zoom }: Props) {
             strokeWidth={2}
             strokeLinejoin="round"
             strokeLinecap="round"
-          />
-        )}
-        {drag && drag.mode === 'create' && activeTool === 'redaction' && (
-          <rect
-            x={Math.min(drag.startX, drag.currentX)}
-            y={Math.min(drag.startY, drag.currentY)}
-            width={Math.abs(drag.currentX - drag.startX)}
-            height={Math.abs(drag.currentY - drag.startY)}
-            fill={toolColor === '#ffeb3b' ? '#000000' : toolColor || '#000000'}
-            fillOpacity={0.85}
-            stroke="#e5534b"
-            strokeWidth={1.5}
-            strokeDasharray="4 2"
           />
         )}
       </svg>

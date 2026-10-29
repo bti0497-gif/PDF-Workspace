@@ -1,0 +1,48 @@
+import assert from 'node:assert/strict'
+import { PDFDocument, PDFArray, PDFDict, PDFHexString, PDFName, PDFNumber } from 'pdf-lib'
+import { bindBookmarkTargets, remapBookmarkTargets, moveBookmark, updateBookmark, deleteBookmark } from '../src/core/domain/bookmark.ts'
+import { writePdfBookmarks } from '../src/core/services/bookmark-persistence.ts'
+
+const node = (id, page, children = []) => ({ id, title: `제목 ${id}`, targetPageIndex: page, children })
+const pages = [{ id: 'p1' }, { id: 'p2' }, { id: 'p3' }]
+const original = [node('a', 0), node('b', 1, [node('c', 2)])]
+const bound = bindBookmarkTargets(original, pages)
+assert.equal(bound[1].children[0].targetPageId, 'p3')
+assert.equal(original[0].targetPageId, undefined)
+const reordered = remapBookmarkTargets(bound, pages, [pages[2], pages[0], pages[1]])
+assert.equal(reordered[0].targetPageIndex, 1)
+assert.equal(reordered[1].children[0].targetPageIndex, 0)
+const deleted = remapBookmarkTargets(bound, pages, [pages[0], pages[2]])
+assert.equal(deleted[1].targetPageIndex, null)
+assert.equal(deleted[1].targetPageId, 'p2')
+assert.equal(remapBookmarkTargets(deleted, [pages[0], pages[2]], pages)[1].targetPageIndex, 1)
+const indented = moveBookmark(bound, 'b', 'indent')
+assert.equal(indented.length, 1)
+assert.equal(indented[0].children[0].id, 'b')
+assert.equal(indented[0].children[0].children[0].id, 'c')
+assert.equal(moveBookmark(indented, 'b', 'outdent')[1].id, 'b')
+assert.equal(moveBookmark(bound, 'b', 'up')[0].id, 'b')
+assert.equal(moveBookmark(bound, 'a', 'down')[1].id, 'a')
+assert.equal(updateBookmark(bound, 'c', { title: '하위 제목 변경' })[1].children[0].title, '하위 제목 변경')
+assert.equal(deleteBookmark(bound, 'b').length, 1)
+assert.equal(bound[1].children[0].title, '제목 c')
+
+const doc = await PDFDocument.create()
+pages.forEach(() => doc.addPage())
+writePdfBookmarks(doc, reordered, [pages[2], pages[0], pages[1]])
+const loaded = await PDFDocument.load(await doc.save())
+const outlines = loaded.catalog.lookup(PDFName.of('Outlines'), PDFDict)
+assert.equal(outlines.lookup(PDFName.of('Count'), PDFNumber).asNumber(), 3)
+const first = outlines.lookup(PDFName.of('First'), PDFDict)
+assert.equal(first.lookup(PDFName.of('Title'), PDFHexString).decodeText(), '제목 a')
+const dest = first.lookup(PDFName.of('Dest'), PDFArray)
+assert.equal(dest.get(0).toString(), loaded.getPage(1).ref.toString())
+const second = first.lookup(PDFName.of('Next'), PDFDict)
+assert.equal(second.lookup(PDFName.of('First'), PDFDict).lookup(PDFName.of('Title'), PDFHexString).decodeText(), '제목 c')
+assert.equal(second.lookup(PDFName.of('First'), PDFDict).get(PDFName.of('Parent')).toString(), first.get(PDFName.of('Next')).toString())
+writePdfBookmarks(loaded, deleted, [pages[0], pages[2]])
+const missingTarget = loaded.catalog.lookup(PDFName.of('Outlines'), PDFDict).lookup(PDFName.of('Last'), PDFDict)
+assert.equal(missingTarget.has(PDFName.of('Dest')), false)
+writePdfBookmarks(loaded, [], pages)
+assert.equal(loaded.catalog.has(PDFName.of('Outlines')), false)
+console.log('PASS: bookmark binding, reorder/delete/undo targets, hierarchy moves, immutable edits, Unicode PDF outline save/reload, missing target, clear outlines')

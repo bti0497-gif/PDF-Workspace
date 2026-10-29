@@ -259,17 +259,8 @@ export async function applyAnnotations(
         }
         break
       }
-      case 'redaction': {
-        page.drawRectangle({
-          x: ann.x,
-          y: ph - ann.y - ann.height,
-          width: ann.width,
-          height: ann.height,
-          color: hexToRgb(ann.color || '#000000'),
-          opacity: 1
-        })
-        break
-      }
+      default:
+          throw new Error('지원하지 않는 주석이 있어 저장을 중단했습니다.')
     }
     // ph 사용 경고 방지용 (참조 유지)
     void pw

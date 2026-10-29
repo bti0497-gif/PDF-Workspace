@@ -2,7 +2,9 @@
  * IPC 핸들러 - 메인 프로세스에서 렌더러의 요청을 처리
  */
 import { ipcMain, dialog, BrowserWindow, shell, app } from 'electron'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, writeFile, rename, copyFile, unlink } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -11,12 +13,31 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 /** 번들에 포함된 한글 폰트(NanumGothic) 경로 - dev/prod 모두 완벽 지원 */
 function getFontPath(): string {
   if (app.isPackaged) {
-    return join(process.resourcesPath, 'assets/fonts/NanumGothic.ttf')
+    return join(process.resourcesPath, 'assets/fonts/NanumGothic-Edit.ttf')
   }
-  return join(__dirname, '../../assets/fonts/NanumGothic.ttf')
+  return join(__dirname, '../../assets/fonts/NanumGothic-Edit.ttf')
 }
 
 const PDF_FILTER = { name: 'PDF 문서', extensions: ['pdf'] }
+
+/** Same-directory temporary write and backup before replacing an existing PDF. */
+async function writePdfSafely(filePath: string, data: number[] | Uint8Array): Promise<void> {
+  const bytes = new Uint8Array(data)
+  if (bytes.length < 5 || Buffer.from(bytes.subarray(0, 5)).toString() !== '%PDF-') {
+    throw new Error('올바른 PDF 데이터가 아니므로 저장하지 않았습니다.')
+  }
+  const temp = `${filePath}.${randomUUID()}.tmp`
+  try {
+    await writeFile(temp, bytes, { flag: 'wx' })
+    if (existsSync(filePath)) {
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+      await copyFile(filePath, `${filePath}.${stamp}.bak`)
+    }
+    await rename(temp, filePath)
+  } finally {
+    await unlink(temp).catch(() => {})
+  }
+}
 
 export function registerIpcHandlers(): void {
   /** 단일 PDF 파일 열기 다이얼로그 */
@@ -65,7 +86,7 @@ export function registerIpcHandlers(): void {
 
   /** Uint8Array 를 경로에 쓰기 */
   ipcMain.handle('file:write', async (_e, filePath: string, data: number[]) => {
-    await writeFile(filePath, new Uint8Array(data))
+    await writePdfSafely(filePath, data)
     return true
   })
 
@@ -79,7 +100,7 @@ export function registerIpcHandlers(): void {
         filters: [PDF_FILTER]
       })
       if (result.canceled || !result.filePath) return null
-      await writeFile(result.filePath, new Uint8Array(data))
+      await writePdfSafely(result.filePath, data)
       return result.filePath
     }
   )

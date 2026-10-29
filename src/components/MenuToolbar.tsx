@@ -2,7 +2,7 @@
  * 스마트 2단 리본 헤더 (Smart 2-Tier Ribbon Header)
  * - 상단 행 (Row 1): 로고/브랜드 + 빠른 실행 툴바 (열기, 저장, 인쇄, 되돌리기) + 6대 카테고리 탭 (파일/홈/페이지/주석/조판/보기) + 우측 페이지 이동/줌/검색/단축키/테마/문서명/리본접기
  * - 하단 행 (Row 2): 선택된 탭의 통합 리본 패널 (오피스 / 아크로뱃 스타일)
- * - 중복 툴바 행(.toolbar--integrated)을 완전히 제거하여 단일 통합된 쾌적한 화면 제공
+ * - 창 너비·모니터 DPI에 맞춰 메뉴/도구 그룹을 자동 줄바꿈하고 리본 높이를 제한
  * - 📌 상시 고정 모드(기본값, localStorage 연동) ↔ 자동 숨김 플라이아웃 모드 지원
  */
 import { useState, useRef, useEffect } from 'react'
@@ -28,10 +28,13 @@ interface Props {
       | 'print'
       | 'watermark'
       | 'pageNumber'
-      | 'stamp'
+      | 'image'
+      | 'image'
+    | 'stamp'
       | 'exportImage'
       | 'ocr'
       | 'metadata'
+      | 'options'
   ) => void
 }
 
@@ -76,13 +79,11 @@ export function MenuToolbar({ onOpenModal }: Props) {
   const resetZoom = useStore((s) => s.resetZoom)
   const setZoom = useStore((s) => s.setZoom)
   const toggleThumbnails = useStore((s) => s.toggleThumbnails)
-  const toggleTheme = useStore((s) => s.toggleTheme)
   const rotatePages = useStore((s) => s.rotatePages)
   const deletePages = useStore((s) => s.deletePages)
   const duplicatePages = useStore((s) => s.duplicatePages)
   const removeAnnotation = useStore((s) => s.removeAnnotation)
   const openSearchBar = useStore((s) => s.openSearchBar)
-  const setDocument = useStore((s) => s.setDocument)
 
   const { openFile } = usePdfDocument()
   const { handleMenuEvent } = useMenuActions()
@@ -97,6 +98,7 @@ export function MenuToolbar({ onOpenModal }: Props) {
     }
   })
   const [activeTab, setActiveTab] = useState<RibbonTab | null>('home')
+  useEffect(() => { if (!doc) setActiveTab('home') }, [doc])
   const containerRef = useRef<HTMLDivElement>(null)
   const leaveTimerRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -144,7 +146,7 @@ export function MenuToolbar({ onOpenModal }: Props) {
   // 리본이 이미 열려 있는 상태에서 다른 탭에 마우스를 올리면 즉시 전환 (Office 스타일)
   const handleTabMouseEnter = (tab: RibbonTab) => {
     handleMouseEnter()
-    if (activeTab !== null && activeTab !== tab) {
+    if (!isPinned && activeTab !== null && activeTab !== tab) {
       setActiveTab(tab)
     }
   }
@@ -187,20 +189,8 @@ export function MenuToolbar({ onOpenModal }: Props) {
     window.dispatchEvent(new CustomEvent('trigger-save'))
   }
 
-  // 문서 닫기
-  const handleCloseDocument = () => {
-    if (!doc) return
-    if (isDirty) {
-      if (
-        !window.confirm(
-          '저장하지 않은 변경 사항이 있습니다. 저장하지 않고 문서를 닫으시겠습니까?'
-        )
-      ) {
-        return
-      }
-    }
-    setDocument(null)
-  }
+  // All close entry points use the same save / discard / cancel flow.
+  const handleCloseDocument = () => { void handleMenuEvent('file:close') }
 
   // 리본 펼침/접기 토글
   const toggleRibbonCollapse = () => {
@@ -315,8 +305,6 @@ export function MenuToolbar({ onOpenModal }: Props) {
           </button>
         </nav>
 
-        <div className="menu-bar__spacer" />
-
         {/* 우측 페이지 이동, 줌 배율, 검색, 단축키, 테마, 문서 상태, 리본 접기 */}
         <div className="menu-bar__right">
           {/* 페이지 이동 컨트롤 */}
@@ -409,10 +397,10 @@ export function MenuToolbar({ onOpenModal }: Props) {
           </button>
           <button
             className="menu-bar__quick-btn"
-            title="테마 전환 (다크/라이트)"
-            onClick={toggleTheme}
+            title="옵션: 화면과 썸네일 설정"
+            onClick={() => onOpenModal('options')}
           >
-            🌓 테마
+            옵션
           </button>
 
           {doc && (
@@ -546,16 +534,7 @@ export function MenuToolbar({ onOpenModal }: Props) {
                       <span className="ribbon-card__label">형광펜</span>
                       <span className="ribbon-card__sub">강조 표시</span>
                     </button>
-                    <button
-                      className={`ribbon-card ${activeTool === 'redaction' ? 'ribbon-card--active' : ''}`}
-                      title="민감정보 영구 마스킹 (먹줄 가리기)"
-                      onClick={() => runAction(() => setActiveTool('redaction'))}
-                      disabled={!doc}
-                    >
-                      <span className="ribbon-card__icon">⬛</span>
-                      <span className="ribbon-card__label">먹줄 마스킹</span>
-                      <span className="ribbon-card__sub">개인정보 차단</span>
-                    </button>
+
                     <button
                       className={`ribbon-card ${activeTool === 'textbox' ? 'ribbon-card--active' : ''}`}
                       title="텍스트 상자 추가"
@@ -587,6 +566,7 @@ export function MenuToolbar({ onOpenModal }: Props) {
                       <span className="ribbon-card__sub">텍스트 추출</span>
                     </button>
                   </div>
+                  <button className="btn" disabled={!doc} onClick={() => onOpenModal('image')}>이미지 추가</button>
                   <div className="ribbon-group__title">핵심 도구</div>
                 </div>
 
@@ -693,13 +673,13 @@ export function MenuToolbar({ onOpenModal }: Props) {
                     </button>
                     <button
                       className="ribbon-card"
-                      title="문서 닫기"
+                      title="문서 닫기 (Ctrl+W)"
                       onClick={() => runAction(handleCloseDocument)}
                       disabled={!doc}
                     >
                       <span className="ribbon-card__icon">✕</span>
                       <span className="ribbon-card__label">닫기</span>
-                      <span className="ribbon-card__sub">작업 종료</span>
+                      <span className="ribbon-card__sub">Ctrl+W · 시작 화면</span>
                     </button>
                   </div>
                   <div className="ribbon-group__title">문서 제어</div>
@@ -763,7 +743,7 @@ export function MenuToolbar({ onOpenModal }: Props) {
                     >
                       <span className="ribbon-card__icon">📄</span>
                       <span className="ribbon-card__label">프로그램 정보</span>
-                      <span className="ribbon-card__sub">v1.0.1</span>
+                      <span className="ribbon-card__sub">v1.0.2</span>
                     </button>
                   </div>
                   <div className="ribbon-group__title">정보 & 업데이트</div>
@@ -774,6 +754,11 @@ export function MenuToolbar({ onOpenModal }: Props) {
             {/* 📄 페이지 탭 리본 */}
             {activeTab === 'page' && (
               <>
+                <div className="ribbon-group"><div className="ribbon-group__content">
+                  <button className="ribbon-card" disabled={!doc} title="큰 썸네일로 페이지 순서 및 삽입 관리" onClick={() => window.dispatchEvent(new Event('workspace:organize'))}>
+                    <span className="ribbon-card__icon">▦</span><span className="ribbon-card__label">페이지 정리</span><span className="ribbon-card__sub">순서·삽입·추출</span>
+                  </button>
+                </div><div className="ribbon-group__title">문서 구성</div></div>
                 <div className="ribbon-group">
                   <div className="ribbon-group__content">
                     <button
@@ -815,7 +800,7 @@ export function MenuToolbar({ onOpenModal }: Props) {
                       <span className="ribbon-card__sub">상하 뒤집기</span>
                     </button>
                   </div>
-                  <div className="ribbon-group__title">페이지 회전 (비파괴 0ms)</div>
+                  <div className="ribbon-group__title">페이지 회전</div>
                 </div>
 
                 <div className="ribbon-group">
@@ -881,18 +866,18 @@ export function MenuToolbar({ onOpenModal }: Props) {
                       disabled={!doc}
                     >
                       <span className="ribbon-card__icon">⛶</span>
-                      <span className="ribbon-card__label">조판 통일</span>
+                      <span className="ribbon-card__label">용지 크기</span>
                       <span className="ribbon-card__sub">A4/B5 규격화</span>
                     </button>
                     <button
                       className="ribbon-card"
-                      title="상하좌우 mm 단위 여백 절단"
+                      title="드래그로 영역 선택 및 여백 정밀 조절"
                       onClick={() => runAction(() => onOpenModal('crop'))}
                       disabled={!doc}
                     >
                       <span className="ribbon-card__icon">✂</span>
-                      <span className="ribbon-card__label">여백 자르기</span>
-                      <span className="ribbon-card__sub">스캔 테두리 제거</span>
+                      <span className="ribbon-card__label">페이지 자르기</span>
+                      <span className="ribbon-card__sub">드래그 영역 지정</span>
                     </button>
                   </div>
                   <div className="ribbon-group__title">규격 및 여백</div>
@@ -987,16 +972,7 @@ export function MenuToolbar({ onOpenModal }: Props) {
                       <span className="ribbon-card__label">자유형 펜</span>
                       <span className="ribbon-card__sub">손글씨 그리기</span>
                     </button>
-                    <button
-                      className={`ribbon-card ${activeTool === 'redaction' ? 'ribbon-card--active' : ''}`}
-                      title="민감정보 영구 마스킹 (먹줄 가리기)"
-                      onClick={() => runAction(() => setActiveTool('redaction'))}
-                      disabled={!doc}
-                    >
-                      <span className="ribbon-card__icon">⬛</span>
-                      <span className="ribbon-card__label">먹줄 마스킹</span>
-                      <span className="ribbon-card__sub">개인정보 차단</span>
-                    </button>
+
                     <button
                       className="ribbon-card"
                       title="결재 도장 · 전자서명 · 이미지 삽입"
@@ -1164,8 +1140,8 @@ export function MenuToolbar({ onOpenModal }: Props) {
                       disabled={!doc}
                     >
                       <span className="ribbon-card__icon">✂</span>
-                      <span className="ribbon-card__label">여백 자르기</span>
-                      <span className="ribbon-card__sub">상하좌우 크롭</span>
+                      <span className="ribbon-card__label">페이지 자르기</span>
+                      <span className="ribbon-card__sub">드래그·수치 조절</span>
                     </button>
                     <button
                       className="ribbon-card"
@@ -1347,12 +1323,12 @@ export function MenuToolbar({ onOpenModal }: Props) {
                     </button>
                     <button
                       className="ribbon-card"
-                      title="다크 / 라이트 테마 전환"
-                      onClick={() => runAction(toggleTheme)}
+                      title="옵션: 화면과 썸네일 설정"
+                      onClick={() => runAction(() => onOpenModal('options'))}
                     >
-                      <span className="ribbon-card__icon">🌓</span>
-                      <span className="ribbon-card__label">테마 전환</span>
-                      <span className="ribbon-card__sub">다크/라이트</span>
+                      <span className="ribbon-card__icon">⋯</span>
+                      <span className="ribbon-card__label">옵션</span>
+                      <span className="ribbon-card__sub">화면·썸네일</span>
                     </button>
                   </div>
                   <div className="ribbon-group__title">패널 및 테마</div>

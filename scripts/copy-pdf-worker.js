@@ -38,3 +38,10 @@ if (existsSync(fontsSrc)) {
   cpSync(fontsSrc, fontsDest, { recursive: true, force: true })
   console.log(`[copy-pdf-worker] standard_fonts 복사 완료: ${fontsDest}`)
 }
+
+// Keep preview and desktop text metrics on the same bundled font.
+const editFont = resolve(root, 'assets/fonts/NanumGothic.ttf')
+if (existsSync(editFont)) {
+  mkdirSync(resolve(destDir, 'fonts'), { recursive: true })
+  copyFileSync(editFont, resolve(destDir, 'fonts/NanumGothic.ttf'))
+}

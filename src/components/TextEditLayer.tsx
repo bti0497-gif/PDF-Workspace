@@ -1,528 +1,75 @@
-/**
- * 본문 텍스트 인라인 직접 편집 레이어 (Direct In-place Text Editing Layer)
- * - PDF.js TextContent 기반 텍스트 블록 실시간 감지 및 인라인 에디터 제공
- * - 텍스트 수정 시 실시간 화이트아웃(Whiteout) 및 나눔고딕 오버레이
- * - 수정 내역 원클릭 복원(Revert) 및 기존 수정 항목 재편집(Re-edit) 완벽 지원
- * - 좌/중/우 정렬 및 폰트 크기 조절 미니 툴바 제공
- */
+import { createPortal } from 'react-dom'
 import { useState, useEffect, useRef } from 'react'
+import type { PDFFont } from 'pdf-lib'
 import { useStore } from '../lib/store'
 import { getEditableTextItems, type EditableTextItem } from '../core/services/text-editor.service'
+import { loadEditFont, measureEditText, fitsText } from '../core/services/text-edit-metrics'
 import type { TextReplacement } from '../core/domain/page'
-
-interface Props {
-  pageIndex: number
-  zoom: number
-  rotation: number
-}
-
+interface Props { pageIndex: number; zoom: number; rotation: number }
 export function TextEditLayer({ pageIndex, zoom }: Props) {
-  const pages = useStore((s) => s.pages)
-  const activeTool = useStore((s) => s.activeTool)
-  const toolColor = useStore((s) => s.toolColor)
-  const addTextReplacement = useStore((s) => s.addTextReplacement)
-  const removeTextReplacement = useStore((s) => s.removeTextReplacement)
-
-  const virtualPage = pages[pageIndex]
-  const textReplacements = virtualPage?.textReplacements ?? []
-
-  const [textItems, setTextItems] = useState<EditableTextItem[]>([])
-  const [hoveredId, setHoveredId] = useState<string | null>(null)
-  const [editingItem, setEditingItem] = useState<{
-    id: string
-    originalItemId: string
-    str: string
-    pdfX: number
-    pdfY: number
-    origPdfWidth: number
-    pdfHeight: number
-    fontSize: number
-    vx: number
-    vy: number
-    origVw: number
-    vh: number
-    existingReplacementId?: string
-  } | null>(null)
-
-  const [editText, setEditText] = useState('')
-  const [editColor, setEditColor] = useState('#1e1e1e')
-  const [editFontSize, setEditFontSize] = useState<number>(12)
-  const [editAlign, setEditAlign] = useState<'left' | 'center' | 'right'>('left')
-
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  // 텍스트 블록 데이터 로드
-  useEffect(() => {
-    if (!virtualPage) return
-    let active = true
-    void getEditableTextItems(virtualPage).then((items) => {
-      if (active) setTextItems(items)
-    })
-    return () => {
-      active = false
-    }
-  }, [virtualPage])
-
-  // 인라인 편집기 열릴 때 자동 포커스
-  useEffect(() => {
-    if (editingItem && inputRef.current) {
-      inputRef.current.focus()
-      inputRef.current.select()
-    }
-  }, [editingItem])
-
-  const isEditMode = activeTool === 'text-edit'
-
-  // 이미 대체된 원본 아이템 ID 집합 (중복 덮어쓰기 방지)
-  const replacedOriginalIds = new Set(
-    textReplacements
-      .map((tr) => tr.originalItemId)
-      .filter((id): id is string => Boolean(id))
-  )
-
-  // 1. 신규 편집 시작
-  const startEditingNew = (item: EditableTextItem) => {
-    setEditingItem({
-      id: item.id,
-      originalItemId: item.id,
-      str: item.str,
-      pdfX: item.pdfX,
-      pdfY: item.pdfY,
-      origPdfWidth: item.pdfWidth,
-      pdfHeight: item.pdfHeight,
-      fontSize: item.fontSize,
-      vx: item.vx,
-      vy: item.vy,
-      origVw: item.vw,
-      vh: item.vh
-    })
-    setEditText(item.str)
-    setEditFontSize(item.fontSize)
-    setEditAlign('left')
-    setEditColor(toolColor && toolColor !== '#ffeb3b' ? toolColor : '#1e1e1e')
+  const v = useStore(s=>s.pages[pageIndex])
+  const active = useStore(s=>s.activeTool)==='text-edit'
+  const currentPage = useStore(s=>s.currentPage)
+  const portal = document.getElementById('text-edit-notice')
+  const add = useStore(s=>s.addTextReplacement)
+  const remove = useStore(s=>s.removeTextReplacement)
+  const [items,setItems]=useState<EditableTextItem[]>([])
+  const [font,setFont]=useState<PDFFont|null>(null)
+  const [error,setError]=useState('')
+  const [item,setItem]=useState<EditableTextItem|null>(null)
+  const [existing,setExisting]=useState<TextReplacement|null>(null)
+  const [text,setText]=useState('')
+  const [size,setSize]=useState(12)
+  const [color,setColor]=useState('#000000')
+  const [align,setAlign]=useState<'left'|'center'|'right'>('left')
+  const [consent,setConsent]=useState(false)
+  const input=useRef<HTMLInputElement>(null)
+  const composing=useRef(false)
+  useEffect(()=>{let live=true; if(v) getEditableTextItems(v).then(x=>{if(live)setItems(x)}).catch(e=>{if(live)setError(String(e))}); return()=>{live=false}},[v])
+  useEffect(()=>{if(active) loadEditFont().then(f=>{setFont(f);setError('')}).catch(e=>setError(e.message))},[active])
+  useEffect(()=>{setConsent(false);setItem(null)},[v?.id])
+  useEffect(()=>{if(item)input.current?.focus()},[item])
+  if(!v)return null
+  const replacements=v.textReplacements??[]
+  let measured=0
+  let measureError=''
+  try { if(font) measured=measureEditText(font,text,size) } catch { measureError='이 문자는 대체 폰트로 표현할 수 없습니다.' }
+  const overflow=!!item && !fitsText(measured,item.pdfWidth)
+  const canApply=!!font && consent && !overflow && !measureError && size>0 && !!item && size<=item.fontSize+0.01
+  const start=(target:EditableTextItem,tr?:TextReplacement)=>{useStore.getState().setCurrentPage(pageIndex);setItem(target);setExisting(tr??null);setText(tr?.newText??target.str);setSize(tr?.fontSize??target.fontSize);setColor(tr?.color??'#000000');setAlign(tr?.align??'left')}
+  const apply=()=>{
+    if(!item||!canApply||composing.current)return
+    if(existing)remove(pageIndex,existing.id)
+    if(text!==item.str || size!==item.fontSize || align!=='left' || color!=='#000000') add({id:`tr_${Date.now()}`,pageIndex,originalItemId:item.id,pdfX:item.pdfX,pdfY:item.pdfY,pdfWidth:item.pdfWidth,pdfHeight:item.pdfHeight,vx:item.vx,vy:item.vy,vw:item.vw,vh:item.vh,origVw:item.vw,origPdfWidth:item.pdfWidth,originalText:item.str,newText:text,fontSize:size,align,color,backgroundColor:'#ffffff',safeRasterize:true})
+    setItem(null)
   }
-
-  // 2. 기존 수정된 항목 재편집 (Re-edit)
-  const startReEditing = (tr: TextReplacement) => {
-    setEditingItem({
-      id: tr.id,
-      originalItemId: tr.originalItemId ?? tr.id,
-      str: tr.originalText,
-      pdfX: tr.pdfX,
-      pdfY: tr.pdfY,
-      origPdfWidth: tr.origPdfWidth ?? tr.pdfWidth,
-      pdfHeight: tr.pdfHeight,
-      fontSize: tr.fontSize,
-      vx: tr.vx,
-      vy: tr.vy,
-      origVw: tr.origVw ?? tr.vw,
-      vh: tr.vh,
-      existingReplacementId: tr.id
-    })
-    setEditText(tr.newText)
-    setEditFontSize(tr.fontSize)
-    setEditAlign(tr.align ?? 'left')
-    setEditColor(tr.color)
-  }
-
-  // 편집 커밋
-  const commitEdit = () => {
-    if (!editingItem) return
-    const trimmed = editText.trim()
-
-    // 기존 수정본이 있는 경우 먼저 제거하고 갱신
-    if (editingItem.existingReplacementId) {
-      removeTextReplacement(pageIndex, editingItem.existingReplacementId)
-    }
-
-    if (trimmed && trimmed !== editingItem.str) {
-      const estimatedVWidth = Math.max(
-        editingItem.origVw,
-        editText.length * (editFontSize * 0.6)
-      )
-      const estimatedPdfWidth = Math.max(
-        editingItem.origPdfWidth,
-        editText.length * (editFontSize * 0.6)
-      )
-
-      const replacement: TextReplacement = {
-        id: `tr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        pageIndex,
-        originalItemId: editingItem.originalItemId,
-        pdfX: editingItem.pdfX,
-        pdfY: editingItem.pdfY,
-        pdfWidth: estimatedPdfWidth,
-        pdfHeight: editingItem.pdfHeight,
-        origPdfWidth: editingItem.origPdfWidth,
-        vx: editingItem.vx,
-        vy: editingItem.vy,
-        vw: estimatedVWidth,
-        vh: editingItem.vh,
-        origVw: editingItem.origVw,
-        originalText: editingItem.str,
-        newText: editText,
-        fontSize: editFontSize,
-        align: editAlign,
-        color: editColor,
-        backgroundColor: '#ffffff'
-      }
-      addTextReplacement(replacement)
-    }
-    setEditingItem(null)
-  }
-
-  // 편집 취소
-  const cancelEdit = () => {
-    setEditingItem(null)
-  }
-
-  return (
-    <div
-      className={`text-edit-layer ${isEditMode ? 'text-edit-layer--active' : ''}`}
-      style={{
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        pointerEvents: isEditMode || textReplacements.length > 0 ? 'auto' : 'none',
-        zIndex: 15
-      }}
-    >
-      {/* ── 1. 기존 수정 내역 (Whiteout 소거 + 새 텍스트 렌더링) ── */}
-      {textReplacements.map((tr) => {
-        const isEditingThis = editingItem?.existingReplacementId === tr.id
-        if (isEditingThis) return null
-
-        const whiteoutW = (tr.origVw ?? tr.vw) * zoom
-        const whiteoutH = tr.vh * zoom
-
-        return (
-          <div key={tr.id}>
-            {/* 원본 텍스트 소거 배경 (Whiteout): 항상 원본 텍스트 영역만큼만 정확히 은폐 */}
-            <div
-              className="text-replacement__whiteout"
-              style={{
-                position: 'absolute',
-                left: `${tr.vx * zoom - 1}px`,
-                top: `${tr.vy * zoom - 1}px`,
-                width: `${whiteoutW + 2}px`,
-                height: `${whiteoutH + 2}px`,
-                backgroundColor: tr.backgroundColor || '#ffffff',
-                zIndex: 12
-              }}
-            />
-
-            {/* 대체된 새 텍스트 (클릭 시 재편집 모드로 전환) */}
-            <div
-              className="text-replacement__badge"
-              onClick={() => isEditMode && startReEditing(tr)}
-              style={{
-                position: 'absolute',
-                left: `${tr.vx * zoom}px`,
-                top: `${tr.vy * zoom}px`,
-                width: `${whiteoutW}px`,
-                height: `${whiteoutH}px`,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent:
-                  tr.align === 'center'
-                    ? 'center'
-                    : tr.align === 'right'
-                    ? 'flex-end'
-                    : 'flex-start',
-                zIndex: 13,
-                fontSize: `${Math.max(9, tr.fontSize * zoom)}px`,
-                color: tr.color,
-                lineHeight: 1,
-                fontFamily: 'NanumGothic, "Malgun Gothic", sans-serif',
-                cursor: isEditMode ? 'pointer' : 'default',
-                outline: isEditMode ? '1px dashed var(--color-accent)' : 'none'
-              }}
-              title={isEditMode ? '클릭하여 다시 편집' : undefined}
-            >
-              <span className="text-replacement__content" style={{ whiteSpace: 'nowrap' }}>
-                {tr.newText}
-              </span>
-              {isEditMode && (
-                <button
-                  type="button"
-                  className="text-replacement__revert-btn"
-                  title={`원본으로 복원: "${tr.originalText}"`}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    removeTextReplacement(pageIndex, tr.id)
-                  }}
-                  style={{
-                    background: 'rgba(229, 83, 75, 0.9)',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: '50%',
-                    width: 14,
-                    height: 14,
-                    fontSize: 9,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    cursor: 'pointer',
-                    marginLeft: 4
-                  }}
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          </div>
-        )
-      })}
-
-      {/* ── 2. 본문 편집 모드일 때 감지된 텍스트 블록 하이라이트 (이미 대체된 항목은 제외) ── */}
-      {isEditMode &&
-        textItems
-          .filter((item) => !replacedOriginalIds.has(item.id))
-          .map((item) => {
-            const isHovered = hoveredId === item.id
-            const isEditingThis = editingItem?.id === item.id
-            if (isEditingThis) return null
-
-            return (
-              <div
-                key={item.id}
-                className={`text-detect-box ${isHovered ? 'text-detect-box--hovered' : ''}`}
-                style={{
-                  position: 'absolute',
-                  left: `${item.vx * zoom - 1}px`,
-                  top: `${item.vy * zoom - 1}px`,
-                  width: `${item.vw * zoom + 2}px`,
-                  height: `${item.vh * zoom + 2}px`,
-                  cursor: 'text',
-                  zIndex: 14,
-                  border: isHovered ? '1px solid var(--color-accent)' : '1px dashed rgba(16, 185, 129, 0.4)',
-                  background: isHovered ? 'rgba(16, 185, 129, 0.12)' : 'transparent',
-                  borderRadius: 2
-                }}
-                onMouseEnter={() => setHoveredId(item.id)}
-                onMouseLeave={() => setHoveredId(null)}
-                onClick={() => startEditingNew(item)}
-                title={`클릭하여 수정: "${item.str}"`}
-              >
-                {isHovered && (
-                  <span
-                    style={{
-                      position: 'absolute',
-                      top: -18,
-                      left: 0,
-                      background: 'var(--color-accent)',
-                      color: '#ffffff',
-                      fontSize: 10,
-                      fontWeight: 600,
-                      padding: '1px 5px',
-                      borderRadius: 3,
-                      whiteSpace: 'nowrap',
-                      pointerEvents: 'none',
-                      zIndex: 20
-                    }}
-                  >
-                    ✍️ 수정
-                  </span>
-                )}
-              </div>
-            )
-          })}
-
-      {/* ── 3. 활성화된 인라인 텍스트 에디터 오버레이 ── */}
-      {editingItem && (
-        <div
-          className="inline-text-editor"
-          style={{
-            position: 'absolute',
-            left: `${editingItem.vx * zoom - 2}px`,
-            top: `${editingItem.vy * zoom - 4}px`,
-            zIndex: 35
-          }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div
-            className="inline-text-editor__input-wrapper"
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              background: 'var(--color-bg-elevated)',
-              padding: 4,
-              borderRadius: 6,
-              boxShadow: '0 6px 20px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--color-accent)'
-            }}
-          >
-            {/* 상단 미니 툴바 (폰트 크기, 정렬, 색상) */}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 4,
-                marginBottom: 4,
-                fontSize: 11,
-                borderBottom: '1px solid var(--color-border)',
-                paddingBottom: 4
-              }}
-            >
-              {/* 글자 크기 조절 */}
-              <span style={{ color: 'var(--color-text-muted)' }}>크기:</span>
-              <button
-                type="button"
-                onClick={() => setEditFontSize((s) => Math.max(8, Number((s - 0.5).toFixed(1))))}
-                style={toolBtnStyle}
-                title="글자 크기 축소 (-0.5pt)"
-              >
-                -
-              </button>
-              <span style={{ minWidth: 28, textAlign: 'center', fontWeight: 600 }}>
-                {editFontSize}pt
-              </span>
-              <button
-                type="button"
-                onClick={() => setEditFontSize((s) => Math.min(72, Number((s + 0.5).toFixed(1))))}
-                style={toolBtnStyle}
-                title="글자 크기 확대 (+0.5pt)"
-              >
-                +
-              </button>
-
-              <div style={{ width: 1, height: 12, background: 'var(--color-border)', margin: '0 2px' }} />
-
-              {/* 정렬 선택 */}
-              <button
-                type="button"
-                onClick={() => setEditAlign('left')}
-                style={{
-                  ...toolBtnStyle,
-                  background: editAlign === 'left' ? 'var(--color-accent)' : 'transparent',
-                  color: editAlign === 'left' ? '#fff' : 'inherit'
-                }}
-                title="왼쪽 정렬"
-              >
-                좌
-              </button>
-              <button
-                type="button"
-                onClick={() => setEditAlign('center')}
-                style={{
-                  ...toolBtnStyle,
-                  background: editAlign === 'center' ? 'var(--color-accent)' : 'transparent',
-                  color: editAlign === 'center' ? '#fff' : 'inherit'
-                }}
-                title="가운데 정렬"
-              >
-                중
-              </button>
-              <button
-                type="button"
-                onClick={() => setEditAlign('right')}
-                style={{
-                  ...toolBtnStyle,
-                  background: editAlign === 'right' ? 'var(--color-accent)' : 'transparent',
-                  color: editAlign === 'right' ? '#fff' : 'inherit'
-                }}
-                title="오른쪽 정렬"
-              >
-                우
-              </button>
-
-              <div style={{ width: 1, height: 12, background: 'var(--color-border)', margin: '0 2px' }} />
-
-              {/* 글자 색상 */}
-              <input
-                type="color"
-                value={editColor}
-                onChange={(e) => setEditColor(e.target.value)}
-                style={{
-                  width: 18,
-                  height: 18,
-                  border: 'none',
-                  padding: 0,
-                  background: 'transparent',
-                  cursor: 'pointer'
-                }}
-                title="글자 색상"
-              />
-            </div>
-
-            {/* 입력 필드 */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <input
-                ref={inputRef}
-                type="text"
-                value={editText}
-                onChange={(e) => setEditText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    commitEdit()
-                  } else if (e.key === 'Escape') {
-                    e.preventDefault()
-                    cancelEdit()
-                  }
-                }}
-                style={{
-                  fontSize: `${Math.max(11, editFontSize * zoom)}px`,
-                  color: editColor,
-                  textAlign: editAlign,
-                  minWidth: `${Math.max(140, editingItem.origVw * zoom + 16)}px`,
-                  padding: '4px 6px',
-                  borderRadius: 4,
-                  border: '1px solid var(--color-border)',
-                  background: '#ffffff',
-                  outline: 'none',
-                  fontFamily: 'NanumGothic, "Malgun Gothic", sans-serif'
-                }}
-              />
-              <button
-                type="button"
-                onClick={commitEdit}
-                style={{
-                  padding: '4px 8px',
-                  borderRadius: 4,
-                  background: 'var(--color-accent)',
-                  color: '#ffffff',
-                  border: 'none',
-                  fontSize: 11,
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  whiteSpace: 'nowrap'
-                }}
-                title="적용 (Enter)"
-              >
-                ✓ 적용
-              </button>
-              <button
-                type="button"
-                onClick={cancelEdit}
-                style={{
-                  padding: '4px 6px',
-                  borderRadius: 4,
-                  background: 'transparent',
-                  color: 'var(--color-text-muted)',
-                  border: 'none',
-                  fontSize: 12,
-                  cursor: 'pointer'
-                }}
-                title="취소 (Esc)"
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-const toolBtnStyle: React.CSSProperties = {
-  background: 'transparent',
-  border: '1px solid var(--color-border)',
-  borderRadius: 3,
-  padding: '1px 5px',
-  fontSize: 10,
-  cursor: 'pointer',
-  color: 'inherit'
+  return <div style={{position:'absolute',inset:0,pointerEvents:'none',zIndex:15}}>
+    {active&&currentPage===pageIndex&&portal&&createPortal(<div style={{padding:'8px 16px',background:'var(--color-bg-elevated)',border:'1px solid var(--color-border)',borderRadius:6,pointerEvents:'auto',zIndex:40,fontSize:12}}>
+      <strong>배치 보호 편집 · 선택 범위 밖은 고정</strong>
+      <p style={{margin:'5px 0'}}>대체 글꼴: 편집용 한글 폰트. 흰 배경의 가로 문구만 지원합니다. 서로 다른 글자 조각·표의 칸은 자동으로 합치지 않습니다.</p>
+      <label style={{display:'flex',gap:6,alignItems:'flex-start'}}><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)}/>안전 교체 사본 저장에 동의: 수정한 페이지는 이미지화되고, 그 페이지에서는 새 문구만 검색·복사할 수 있고 기존 링크·양식도 이미지로 고정됩니다. 원본 파일은 별도로 보관하세요.</label>
+      {(v.rotation%360!==0||v.normalizedConfig)&&<p role="alert">회전·조판 페이지는 좌표 보호를 위해 본문 편집을 지원하지 않습니다.</p>}
+      {!items.length&&<p>안전하게 분리할 수 있는 문구가 없습니다. 스캔·겹친 글자·복잡한 공백 구간은 편집 대상에서 제외합니다.</p>}
+      {error&&<p role="alert" style={{color:'#d33'}}>{error}</p>}
+    </div>,portal)}
+    {replacements.map(tr=><div key={tr.id} onClick={()=>{if(active){const original=items.find(x=>x.id===tr.originalItemId);if(original)start(original,tr)}}} title="수정한 문구 다시 편집" style={{position:'absolute',left:tr.vx*zoom,top:tr.vy*zoom,width:(tr.origVw??tr.vw)*zoom,height:tr.vh*zoom,background:'#fff',pointerEvents:active?'auto':'none',outline:active?'1px dashed #2580c8':'none',cursor:active?'text':'default',overflow:'hidden'}}>
+      <span style={{position:'absolute',left:0,right:0,top:0,fontFamily:'WorkspaceEditFont',fontSize:tr.fontSize*zoom,lineHeight:`${tr.vh*zoom}px`,whiteSpace:'pre',textAlign:tr.align??'left',color:tr.color}}>{tr.newText}</span>
+    </div>)}
+    {active&&items.filter(x=>!replacements.some(r=>r.originalItemId===x.id)).map(x=><button key={x.id} aria-label={`문구 수정: ${x.str}`} title="이 문구만 수정" onClick={()=>start(x)} style={{position:'absolute',left:x.vx*zoom,top:x.vy*zoom,width:Math.max(4,x.vw*zoom),height:x.vh*zoom,padding:0,background:'transparent',border:'1px dashed #218f8b66',pointerEvents:'auto',cursor:'text'}}/>)}
+    {active&&item&&<div role="dialog" aria-label="배치 보호 문구 편집" style={{position:'fixed',bottom:48,left:'50%',transform:'translateX(-50%)',width:600,maxWidth:'90vw',background:'var(--color-bg-elevated)',color:'var(--color-text)',padding:16,border:'1px solid var(--color-accent)',borderRadius:8,boxShadow:'0 8px 30px #0005',pointerEvents:'auto',zIndex:80}}>
+      <strong>선택한 문구만 수정</strong><div style={{fontSize:12,margin:'7px 0'}}>원문: {item.str} · 고정 폭 {item.pdfWidth.toFixed(1)}pt · 새 문구 {measured.toFixed(1)}pt</div>
+      <div style={{display:'flex',gap:10,alignItems:'center',marginBottom:8}}>
+        <label>크기 <input aria-label="편집 글자 크기" type="number" min={4} max={item.fontSize} step={0.5} value={size} onChange={e=>setSize(Number(e.target.value))} style={{width:64}}/></label>
+        <label>정렬 <select aria-label="편집 정렬" value={align} onChange={e=>setAlign(e.target.value as typeof align)}><option value="left">왼쪽 고정</option><option value="center">중심 고정</option><option value="right">오른쪽 고정</option></select></label>
+        <input aria-label="편집 글자 색" type="color" value={color} onChange={e=>setColor(e.target.value)}/>
+      </div>
+      <input ref={input} aria-label="수정할 문구" value={text} onChange={e=>setText(e.target.value)} onCompositionStart={()=>{composing.current=true}} onCompositionEnd={()=>{composing.current=false}} onKeyDown={e=>{e.stopPropagation();if(composing.current||e.nativeEvent.isComposing||e.keyCode===229)return;if(e.key==='Enter'){e.preventDefault();apply()}if(e.key==='Escape')setItem(null)}} style={{width:'100%',boxSizing:'border-box',fontFamily:'WorkspaceEditFont',fontSize:18,padding:8,color,whiteSpace:'pre'}}/>
+      <div style={{margin:'10px 0',fontSize:12}}>선택 범위 미리보기 · 대체 글꼴 사용</div>
+      <div style={{width:item.pdfWidth*zoom,maxWidth:'100%',height:Math.max(24,item.vh*zoom),border:`1px solid ${overflow?'#d33':'#218f8b'}`,background:'#fff',color,fontFamily:'WorkspaceEditFont',fontSize:size*zoom,whiteSpace:'pre',textAlign:align,overflow:'hidden'}}>{text}</div>
+      {(overflow||measureError||size>item.fontSize)&&<p role="alert" style={{color:'#d33'}}> {measureError||'선택 범위를 넘습니다. 문구를 줄이거나 글자 크기를 직접 낮춰 주세요. 주변 글자는 이동하지 않습니다.'}</p>}
+      {!font&&<p>편집 폰트를 준비 중입니다. 폰트를 불러오지 못하면 적용할 수 없습니다.</p>}
+      {!consent&&<p>위쪽의 안전 교체 사본 안내를 확인하고 동의해야 적용할 수 있습니다.</p>}
+      <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:12}}>{existing&&<button onClick={()=>{remove(pageIndex,existing.id);setItem(null)}}>원문 복원</button>}<button onClick={()=>setItem(null)}>취소</button><button disabled={!canApply} onClick={apply}>{text===''?'문구 삭제 적용':'적용'}</button></div>
+    </div>}
+  </div>
 }

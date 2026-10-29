@@ -29,7 +29,6 @@ export type AnnotationType =
   | 'textbox'
   | 'drawing'
   | 'stamp'
-  | 'redaction'
 
 /** 단일 주석 (PDF 좌표계, 원점 좌하단) */
 export interface Annotation {
@@ -116,5 +115,6 @@ export interface UpdateCheckResult {
   version?: string
   message?: string
   percent?: number
+  readyToInstall?: boolean
 }
 

@@ -13,6 +13,7 @@ import { ROOT_DOC_ID } from '../core/domain/document'
 
 /** 렌더링 결과 캐시 키: "소스ID:소스페이지:줌:회전" */
 const renderCache = new LRU<string, ImageBitmap>(32)
+const canvasJobs = new WeakMap<HTMLCanvasElement, { task?: pdfjsLib.RenderTask }>()
 
 export function renderCacheKey(
   sourceDocId: string,
@@ -72,6 +73,11 @@ export async function renderPageToCanvas({
   rotation,
   signal
 }: RenderParams): Promise<{ width: number; height: number }> {
+  const prior = canvasJobs.get(canvas)
+  const job: { task?: pdfjsLib.RenderTask } = {}
+  canvasJobs.set(canvas, job)
+  if (prior?.task) { prior.task.cancel(); await prior.task.promise.catch(() => {}) }
+  if (signal?.aborted || canvasJobs.get(canvas) !== job) return { width: 0, height: 0 }
   const state = useStore.getState()
   const vPage = state.pages[pageIndex]
 
@@ -86,6 +92,7 @@ export async function renderPageToCanvas({
   if (!ctx) throw new Error('2D 컨텍스트를 생성할 수 없습니다.')
 
   const page = await doc.getPage(sourcePageIndex + 1) // pdfjs는 1-based
+  if (signal?.aborted || canvasJobs.get(canvas) !== job) return { width: 0, height: 0 }
   const viewport = page.getViewport({ scale: zoom * window.devicePixelRatio, rotation: pageRotation })
 
   const exactKey = renderCacheKey(sourceDocId, sourcePageIndex, zoom, pageRotation)
@@ -121,6 +128,7 @@ export async function renderPageToCanvas({
     viewport,
     canvas
   } as Parameters<typeof page.render>[0])
+  job.task = renderTask
 
   if (signal) {
     signal.addEventListener('abort', () => {
@@ -129,7 +137,7 @@ export async function renderPageToCanvas({
       } catch {
         /* noop */
       }
-    })
+    }, { once: true })
   }
 
   try {
@@ -221,9 +229,8 @@ export function usePdfRender(
     }
   }, [canvasRef, pageIndex, zoom, rotation])
 
-  useEffect(() => {
-    void render()
-  }, [render])
+  // PageCanvas owns the render call and size update. Do not render twice.
+  useEffect(() => () => { abortRef.current?.abort() }, [])
 
   return { render, isLoading }
 }

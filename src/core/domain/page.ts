@@ -73,6 +73,8 @@ export interface TextReplacement {
   align?: 'left' | 'center' | 'right'
   origVw?: number
   origPdfWidth?: number
+  /** Explicit consent: flatten only this edited page to remove old searchable text. */
+  safeRasterize?: boolean
 }
 
 export const STANDARD_PAGE_FORMATS: PageFormat[] = [
@@ -289,10 +291,16 @@ export function cropVirtualPages(
   const indexSet = new Set(targetIndices)
   return pages.map((page, idx) => {
     if (!indexSet.has(idx)) return page
-    const curW = page.width ?? 595.28
-    const curH = page.height ?? 841.89
-    const newW = Math.max(50, curW - margins.left - margins.right)
-    const newH = Math.max(50, curH - margins.top - margins.bottom)
+    // Margins are absolute relative to the uncropped page, not cumulative.
+    const old = page.cropMargins
+    const curW = (page.width ?? 595.28) + (old ? old.left + old.right : 0)
+    const curH = (page.height ?? 841.89) + (old ? old.top + old.bottom : 0)
+    if (Object.values(margins).some(v => !Number.isFinite(v) || v < 0) ||
+        curW - margins.left - margins.right < 10 || curH - margins.top - margins.bottom < 10) {
+      throw new Error(`${idx + 1}페이지의 자르기 영역은 가로·세로 10pt 이상이어야 합니다.`)
+    }
+    const newW = curW - margins.left - margins.right
+    const newH = curH - margins.top - margins.bottom
 
     return {
       ...page,

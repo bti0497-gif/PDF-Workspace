@@ -22,8 +22,7 @@ export function StatusBar() {
     rectangle: '사각형',
     textbox: '텍스트',
     drawing: '그리기',
-    stamp: '도장/서명',
-    redaction: '먹줄 마스킹'
+    stamp: '도장/서명'
   }
 
   return (

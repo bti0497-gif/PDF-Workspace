@@ -70,6 +70,18 @@ const api = {
   /** 업데이트 수동 확인 */
   checkForUpdates: (): Promise<UpdateCheckResult> => ipcRenderer.invoke('app:checkForUpdates'),
 
+  getUpdateStatus: (): Promise<UpdateCheckResult> => ipcRenderer.invoke('app:getUpdateStatus'),
+  installUpdate: (): Promise<UpdateCheckResult> => ipcRenderer.invoke('app:installUpdate'),
+  onUpdateSafetyCheck: (check: () => boolean): (() => void) => {
+    const listener = (_event: unknown, requestId: string) => {
+      let safe = false
+      try { safe = check() === true } catch {}
+      ipcRenderer.send('updater:safety-result', requestId, safe)
+    }
+    ipcRenderer.on('updater:check-safe', listener)
+    return () => ipcRenderer.removeListener('updater:check-safe', listener)
+  },
+
   /** 업데이트 상태 수신 리스너 */
   onUpdaterStatus: (callback: (data: UpdateCheckResult) => void): (() => void) => {
     const listener = (_e: unknown, data: UpdateCheckResult) => callback(data)

@@ -15,9 +15,18 @@ import '../lib/pdf-worker' // 워커 설정 부수효과
 /** 로드된 pdfjs 문서 객체 캐시 (소스 문서별 관리) */
 const pdfDocProxies = new Map<string, pdfjsLib.PDFDocumentProxy>()
 
+/** Release closed-document caches without restarting the application. */
+export function releasePdfDocuments(): void {
+  const documents = [...pdfDocProxies.values()]
+  pdfDocProxies.clear()
+  clearTextEditorCache()
+  clearRenderCache()
+  for (const doc of documents) void doc.destroy().catch(() => {})
+}
+
 /** pdfjs 문서 객체 반환 (렌더링/썸네일용) */
 export function getPdfDoc(sourceDocId: string = ROOT_DOC_ID): pdfjsLib.PDFDocumentProxy | null {
-  return pdfDocProxies.get(sourceDocId) ?? pdfDocProxies.get(ROOT_DOC_ID) ?? null
+  return pdfDocProxies.get(sourceDocId) ?? null
 }
 
 /** 소스 문서의 pdfjs 프록시 반환 (없으면 온디맨드 로드) */
@@ -29,7 +38,7 @@ export async function getOrLoadPdfDoc(
   if (existing) return existing
 
   const task = pdfjsLib.getDocument({
-    data: bytes,
+    data: bytes.slice(),
     cMapUrl: './cmaps/',
     cMapPacked: true,
     standardFontDataUrl: './standard_fonts/'
@@ -44,6 +53,17 @@ export interface LoadedPdfResult {
   dimensions?: { width: number; height: number }
 }
 
+/** Every page has its own unrotated CropBox size and absolute rotation. */
+export async function readPageGeometries(doc: pdfjsLib.PDFDocumentProxy) {
+  const result: { width: number; height: number; rotation: number }[] = []
+  for (let i = 1; i <= doc.numPages; i++) {
+    const p = await doc.getPage(i)
+    const v = p.getViewport({ scale: 1, rotation: 0 })
+    result.push({ width: v.width, height: v.height, rotation: p.rotate })
+  }
+  return result
+}
+
 /** PDF 데이터로부터 루트 문서 열기 */
 export async function loadPdfFromBytes(
   bytes: Uint8Array,
@@ -55,40 +75,32 @@ export async function loadPdfFromBytes(
   clearTextEditorCache()
   clearRenderCache()
 
-  // 기존 문서들 메모리 정리
-  for (const doc of pdfDocProxies.values()) {
-    try {
-      await doc.destroy()
-    } catch {
-      /* noop */
-    }
-  }
-  pdfDocProxies.clear()
-
   const task = pdfjsLib.getDocument({
-    data: bytes,
+    data: bytes.slice(),
     cMapUrl: './cmaps/',
     cMapPacked: true,
     standardFontDataUrl: './standard_fonts/'
   })
   const doc = await task.promise
   console.log('[loadPdfFromBytes] PDF loaded successfully! Pages:', doc.numPages)
+  // Do not destroy a valid open document until the replacement has parsed.
+  const oldDocs = [...pdfDocProxies.values()]
+  pdfDocProxies.clear()
   pdfDocProxies.set(ROOT_DOC_ID, doc)
+  for (const old of oldDocs) { void old.destroy().catch(() => {}) }
+  const geometries = await readPageGeometries(doc)
 
   // 1페이지 치수 측정 (가상 스크롤 뷰어용)
   let dimensions: { width: number; height: number } | undefined
   try {
     const page1 = await doc.getPage(1)
-    const v1 = page1.getViewport({ scale: 1 })
+    const v1 = page1.getViewport({ scale: 1, rotation: 0 })
     dimensions = { width: v1.width, height: v1.height }
   } catch {
     /* fallback */
   }
 
-  // 북마크 비동기 파싱
-  parsePdfBookmarks(doc).then((bookmarks) => {
-    useStore.getState().setBookmarks(bookmarks)
-  })
+  const bookmarks = await parsePdfBookmarks(doc)
 
   // 최근 파일 목록에 기록
   if (filePath) {
@@ -106,7 +118,9 @@ export async function loadPdfFromBytes(
       filePath,
       fileName,
       pageCount: doc.numPages,
-      rotations: new Array(doc.numPages).fill(0)
+      rotations: geometries.map(p => p.rotation),
+      pageGeometries: geometries,
+      bookmarks
     },
     dimensions
   }
@@ -120,6 +134,7 @@ export function usePdfDocument() {
   const setLoading = useStore((s) => s.setLoading)
 
   const openFile = useCallback(async () => {
+    if (useStore.getState().isDirty && !confirm('저장하지 않은 변경 사항을 버리고 다른 문서를 여시겠습니까?')) return null
     setLoading(true)
     const setLoadingProgress = useStore.getState().setLoadingProgress
     try {
@@ -178,6 +193,7 @@ export function usePdfDocument() {
   /** 경로로부터 파일 열기 (최근 문서 클릭 등) */
   const openFileByPath = useCallback(
     async (filePath: string) => {
+      if (useStore.getState().isDirty && !confirm('저장하지 않은 변경 사항을 버리고 다른 문서를 여시겠습니까?')) return null
       setLoading(true)
       const setLoadingProgress = useStore.getState().setLoadingProgress
       try {

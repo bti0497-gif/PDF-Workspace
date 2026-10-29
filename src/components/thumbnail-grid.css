@@ -1,0 +1,77 @@
+/* Compact, explicit thumbnail layouts. Kept local to ThumbnailPanel. */
+.thumbnail-controls__row {
+  flex-wrap: wrap;
+}
+
+.thumbnail-controls__row:first-child {
+  justify-content: flex-start;
+}
+
+.thumbnail-controls__layout {
+  margin-left: auto;
+}
+
+.thumbnail-controls__layout-label {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.thumbnail-controls__layout-button {
+  min-width: 22px;
+  padding-inline: 4px;
+}
+
+.thumbnail-panel__list.thumbnail-panel__grid {
+  --thumbnail-grid-gap: 7px;
+  display: grid;
+  grid-template-columns: repeat(var(--thumbnail-columns, 1), minmax(0, 1fr));
+  gap: var(--thumbnail-grid-gap);
+  justify-items: center;
+  align-items: start;
+  min-height: 100%;
+  position: relative;
+}
+
+/* Inline render sizes are constrained to the selected grid cell on narrow sidebars. */
+.thumbnail-panel__grid .thumbnail {
+  width: min(var(--thumb-size, 72px), 100%) !important;
+  min-width: 0;
+}
+
+.thumbnail-panel__grid .thumbnail__canvas {
+  width: 100% !important;
+  height: auto !important;
+}
+
+.thumbnail-panel__grid .thumbnail__placeholder {
+  width: 100% !important;
+  min-height: 72px;
+}
+
+/* The indicator is positioned from actual card rectangles, so 1/2/3 columns share
+   the same drop behavior instead of relying on a single vertical list. */
+.thumbnail-drop-indicator.thumbnail-grid-drop-indicator {
+  left: 0;
+  right: auto;
+  width: 0;
+  transform: translate(0, 0);
+}
+
+@media (max-width: 245px) {
+  .thumbnail-controls__row:first-child .thumbnail-controls__group:first-child .thumbnail-controls__badge {
+    display: none;
+  }
+
+  .thumbnail-controls__layout-label {
+    display: none;
+  }
+
+  .thumbnail-controls__layout {
+    gap: 2px;
+  }
+
+  .thumbnail-controls__slider {
+    width: 46px;
+  }
+}

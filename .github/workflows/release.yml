@@ -1,0 +1,111 @@
+name: Release Windows installer
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish NSIS x64
+    runs-on: windows-latest
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Check tag matches package version
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          if ("v$version" -ne $env:GITHUB_REF_NAME) {
+            throw "Tag $env:GITHUB_REF_NAME does not match package.json version $version."
+          }
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Run regression tests
+        run: npm run test:regression
+
+      - name: Build application
+        run: npm run build
+
+      - name: Package NSIS x64 installer without auto-publishing
+        run: node node_modules/electron-builder/cli.js --win nsis --x64 --publish never
+
+      - name: Verify packaged version, resources, and update metadata
+        run: node scripts/verify-release-package.cjs dist
+
+      - name: Create draft release and verify uploaded assets
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $assets = @(
+            Get-ChildItem -Path 'dist' -File -Filter '*.exe'
+            Get-ChildItem -Path 'dist' -File -Filter '*.exe.blockmap'
+            Get-ChildItem -Path 'dist' -File -Filter 'latest.yml'
+          )
+          if ($assets.Count -ne 3) {
+            throw "Expected exactly installer, blockmap, and latest.yml in dist; found: $($assets.Name -join ', ')"
+          }
+          $hashes = @{}
+          foreach ($asset in $assets) {
+            $hashes[$asset.Name] = (Get-FileHash -Algorithm SHA256 -LiteralPath $asset.FullName).Hash
+          }
+
+          # A failed upload leaves only a draft, never GitHub's published latest release.
+          $notes = "CHANGELOG-$($env:TAG.Substring(1)).md"
+          if (-not (Test-Path $notes)) { throw "Release notes missing: $notes" }
+          gh release create "$env:TAG" $assets.FullName --draft --notes-file $notes --title "더존 PDF 편집기 $env:TAG"
+          if ($LASTEXITCODE -ne 0) { throw 'Draft creation/upload failed; do not publish.' }
+          $releaseJson = gh release view "$env:TAG" --json assets
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot verify draft assets.' }
+          $release = $releaseJson | ConvertFrom-Json
+          $uploadedNames = @($release.assets | ForEach-Object { $_.name } | Sort-Object)
+          $expectedNames = @($assets.Name | Sort-Object)
+          if (($uploadedNames -join "`n") -ne ($expectedNames -join "`n")) {
+            throw "Draft release asset names differ from the packaged files."
+          }
+
+          $verifyDirectory = Join-Path $env:RUNNER_TEMP 'release-asset-verify'
+          New-Item -ItemType Directory -Path $verifyDirectory -Force | Out-Null
+          gh release download "$env:TAG" --dir $verifyDirectory --pattern '*'
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot download draft assets for verification.' }
+          foreach ($asset in $assets) {
+            $downloaded = Join-Path $verifyDirectory $asset.Name
+            if (-not (Test-Path -LiteralPath $downloaded)) {
+              throw "Uploaded asset is missing after download: $($asset.Name)"
+            }
+            $downloadedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $downloaded).Hash
+            if ($downloadedHash -ne $hashes[$asset.Name]) {
+              throw "SHA-256 mismatch for uploaded asset: $($asset.Name)"
+            }
+          }
+
+      - name: Publish verified release
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release edit "$env:TAG" --draft=false --latest

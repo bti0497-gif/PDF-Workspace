@@ -5,7 +5,10 @@ import { app, BrowserWindow, shell, screen, nativeImage, Menu, ipcMain, dialog }
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { existsSync } from 'node:fs'
-import { autoUpdater } from 'electron-updater'
+import { randomUUID } from 'node:crypto'
+import { createUpdateController } from './update-controller'
+import updater from 'electron-updater'
+const { autoUpdater } = updater
 import { registerIpcHandlers } from './ipc-handlers'
 import { attachMenu } from './menu'
 
@@ -53,73 +56,46 @@ if (!gotTheLock) {
   })
 }
 
-// electron-updater 자동 업데이트 설정
-autoUpdater.autoDownload = true
-autoUpdater.autoInstallOnAppQuit = true
-
-function setupAutoUpdater(): void {
-  autoUpdater.on('checking-for-update', () => {
-    console.log('[AutoUpdater] Checking for update...')
-  })
-
-  autoUpdater.on('update-available', (info) => {
-    console.log('[AutoUpdater] Update available:', info.version)
-    mainWindow?.webContents.send('updater:status', {
-      status: 'available',
-      version: info.version
-    })
-  })
-
-  autoUpdater.on('update-not-available', (info) => {
-    console.log('[AutoUpdater] Update not available. Current version is up to date.')
-    mainWindow?.webContents.send('updater:status', {
-      status: 'not-available',
-      version: info?.version
-    })
-  })
-
-  autoUpdater.on('download-progress', (progress) => {
-    console.log(`[AutoUpdater] Download progress: ${Math.round(progress.percent)}%`)
-    mainWindow?.webContents.send('updater:status', {
-      status: 'downloading',
-      percent: Math.round(progress.percent)
-    })
-  })
-
-  autoUpdater.on('update-downloaded', (info) => {
-    console.log('[AutoUpdater] Update downloaded:', info.version)
-    mainWindow?.webContents.send('updater:status', {
-      status: 'downloaded',
-      version: info.version
-    })
-
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      dialog
-        .showMessageBox(mainWindow, {
-          type: 'info',
-          buttons: ['지금 재시작 및 업데이트', '나중에(종료 시 자동 적용)'],
-          defaultId: 0,
-          cancelId: 1,
-          title: '더존 PDF 편집기 업데이트 완료',
-          message: `새 버전(v${info.version}) 다운로드가 완료되었습니다.\n지금 재시작하여 업데이트를 적용하시겠습니까?`
-        })
-        .then(({ response }) => {
-          if (response === 0) {
-            isDocumentDirty = false
-            autoUpdater.quitAndInstall()
-          }
-        })
+// Ask the live renderer after input is locked; missing replies must never permit install.
+async function canInstallUpdate(): Promise<boolean> {
+  const window = mainWindow
+  if (!window || window.isDestroyed() || isDocumentDirty || window.webContents.isLoadingMainFrame()) return false
+  return new Promise((resolve) => {
+    const id = randomUUID()
+    const finish = (safe: boolean) => {
+      clearTimeout(timer)
+      ipcMain.removeListener('updater:safety-result', onResult)
+      resolve(safe)
     }
-  })
-
-  autoUpdater.on('error', (err) => {
-    console.error('[AutoUpdater] Error during update:', err)
-    mainWindow?.webContents.send('updater:status', {
-      status: 'error',
-      message: err == null ? '알 수 없는 업데이트 오류' : (err.message || String(err))
-    })
+    const onResult = (event: Electron.IpcMainEvent, requestId: string, safe: boolean) => {
+      if (event.sender === window.webContents && requestId === id) finish(safe === true && !isDocumentDirty)
+    }
+    const timer = setTimeout(() => finish(false), 3000)
+    ipcMain.on('updater:safety-result', onResult)
+    try { window.webContents.send('updater:check-safe', id) } catch { finish(false) }
   })
 }
+const updates = createUpdateController({
+  updater: autoUpdater,
+  isPackaged: () => app.isPackaged,
+  emit: (state) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('updater:status', state)
+  },
+  canInstall: canInstallUpdate,
+  confirmInstall: async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false
+    const result = await dialog.showMessageBox(mainWindow, {
+      type: 'info', buttons: ['재시작하여 업데이트', '나중에'], defaultId: 1, cancelId: 1,
+      title: '더존 PDF 편집기 업데이트',
+      message: '저장된 문서를 닫고 새 버전으로 재시작합니다. 지금 적용할까요?',
+      detail: '일반 종료만으로 업데이트가 자동 설치되지는 않습니다.'
+    })
+    return result.response === 0
+  },
+  lockInteraction: (locked) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setEnabled(!locked)
+  }
+})
 
 function createWindow(): void {
   // 디스플레이 정보 진단 및 현재 마우스 커서 위치 기준 디스플레이 선택 (듀얼 모니터 완벽 지원)
@@ -324,32 +300,13 @@ app.whenReady().then(() => {
     isDocumentDirty = Boolean(dirty)
   })
 
-  // 수동 업데이트 확인 IPC
-  ipcMain.handle('app:checkForUpdates', async () => {
-    if (!app.isPackaged) {
-      return {
-        status: 'dev',
-        message: '개발 모드에서는 자동 업데이트를 실행하지 않습니다.'
-      }
-    }
-    try {
-      const res = await autoUpdater.checkForUpdates()
-      return {
-        status: 'checking',
-        version: res?.updateInfo?.version,
-        message: '최신 업데이트를 확인하고 있습니다...'
-      }
-    } catch (err: any) {
-      console.error('[AutoUpdater] Manual check error:', err)
-      return {
-        status: 'error',
-        message: `업데이트 확인 실패: ${err?.message || String(err)}`
-      }
-    }
-  })
-
-  setupAutoUpdater()
-  console.log('[DIAGNOSTIC] setupAutoUpdater() executed')
+  // Do not accept updater commands from unrelated web contents.
+  ipcMain.handle('app:checkForUpdates', (event) => event.sender === mainWindow?.webContents
+    ? updates.check() : { status: 'error', message: '허용되지 않은 요청입니다.' })
+  ipcMain.handle('app:getUpdateStatus', (event) => event.sender === mainWindow?.webContents
+    ? updates.getStatus() : { status: 'error' })
+  ipcMain.handle('app:installUpdate', (event) => event.sender === mainWindow?.webContents
+    ? updates.install() : { status: 'error', message: '허용되지 않은 요청입니다.' })
 
   Menu.setApplicationMenu(null)
   console.log('[DIAGNOSTIC] Native Win32 menu removed. Modern ribbon header active.')
@@ -359,10 +316,12 @@ app.whenReady().then(() => {
   if (app.isPackaged) {
     setTimeout(() => {
       console.log('[AutoUpdater] Initiating automatic update check...')
-      autoUpdater.checkForUpdatesAndNotify().catch((err) => {
+      updates.check().catch((err) => {
         console.warn('[AutoUpdater] Initial update check failed:', err)
       })
     }, 3000)
+    const updateInterval = setInterval(() => { void updates.check() }, 4 * 60 * 60 * 1000)
+    updateInterval.unref()
   }
 
   app.on('activate', () => {

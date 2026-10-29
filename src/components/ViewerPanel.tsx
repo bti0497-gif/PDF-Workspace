@@ -6,6 +6,7 @@
  */
 import { useRef, useEffect, useState, memo, useCallback } from 'react'
 import { useStore } from '../lib/store'
+import { ProcessedPageView } from './ProcessedPageView'
 import { PageCanvas } from './PageCanvas'
 import { AnnotationLayer } from './AnnotationLayer'
 import { SearchBar } from './SearchBar'
@@ -442,10 +443,7 @@ export function ViewerPanel({ onOpenFile }: Props) {
         data-page={currentPage}
         key={activePage?.id ?? currentPage}
       >
-        <PageCanvas pageIndex={currentPage} zoom={zoom} rotation={rotation} />
-        <SearchHighlightLayer pageIndex={currentPage} zoom={zoom} />
-        <TextEditLayer pageIndex={currentPage} zoom={zoom} rotation={rotation} />
-        <AnnotationLayer pageIndex={currentPage} zoom={zoom} rotation={rotation} />
+        <PageSurface index={currentPage} zoom={zoom} rotation={rotation} />
       </div>
     </main>
   )
@@ -514,24 +512,7 @@ const ContinuousPageItem = memo(function ContinuousPageItem({
       }}
     >
       {isVisible ? (
-        <>
-          <PageCanvas
-            pageIndex={index}
-            zoom={zoom}
-            rotation={virtualPage.rotation}
-          />
-          <SearchHighlightLayer pageIndex={index} zoom={zoom} />
-          <TextEditLayer
-            pageIndex={index}
-            zoom={zoom}
-            rotation={virtualPage.rotation}
-          />
-          <AnnotationLayer
-            pageIndex={index}
-            zoom={zoom}
-            rotation={virtualPage.rotation}
-          />
-        </>
+        <PageSurface index={index} zoom={zoom} rotation={virtualPage.rotation} />
       ) : (
         <div className="viewer__page-placeholder">
           <span>{index + 1} 페이지</span>
@@ -540,3 +521,9 @@ const ContinuousPageItem = memo(function ContinuousPageItem({
     </div>
   )
 })
+
+function PageSurface({ index, zoom, rotation }: { index: number; zoom: number; rotation: number }) {
+  const page = useStore(s => s.pages[index])
+  if (page?.cropMargins || page?.normalizedConfig) return <ProcessedPageView pageIndex={index} zoom={zoom} />
+  return <><PageCanvas pageIndex={index} zoom={zoom} rotation={rotation} /><SearchHighlightLayer pageIndex={index} zoom={zoom} /><TextEditLayer pageIndex={index} zoom={zoom} rotation={rotation} /><AnnotationLayer pageIndex={index} zoom={zoom} rotation={rotation} /></>
+}

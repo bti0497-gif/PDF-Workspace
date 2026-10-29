@@ -4,10 +4,12 @@
  * - 메뉴 이벤트 라우팅
  * - 테마 적용
  */
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { MenuToolbar } from './components/MenuToolbar'
+import { UpdateNotice } from './components/UpdateNotice'
 import { ThumbnailPanel } from './components/ThumbnailPanel'
 import { ViewerPanel } from './components/ViewerPanel'
+import { PageOrganizer } from './components/PageOrganizer'
 import { StatusBar } from './components/StatusBar'
 import { MergeModal } from './components/modals/MergeModal'
 import { SplitModal } from './components/modals/SplitModal'
@@ -24,15 +26,19 @@ import { OcrModal } from './components/modals/OcrModal'
 import { MetadataModal } from './components/modals/MetadataModal'
 import { ProgressBarModal } from './components/modals/ProgressBarModal'
 import { SplashScreen } from './components/SplashScreen'
+import { OptionsModal } from './components/modals/OptionsModal'
+import { CloseDocumentModal } from './components/modals/CloseDocumentModal'
 import { useStore } from './lib/store'
-import { usePdfDocument } from './hooks/usePdfDocument'
-import { useMenuActions } from './hooks/useMenuActions'
+import { releasePdfDocuments, usePdfDocument } from './hooks/usePdfDocument'
+import { saveCurrentDocument, useMenuActions } from './hooks/useMenuActions'
 import type { MenuEvent } from '../electron/shared/types'
 
 export default function App() {
   const theme = useStore((s) => s.theme)
   const document = useStore((s) => s.document)
   const isDirty = useStore((s) => s.isDirty)
+  const isLoading = useStore((s) => s.isLoading)
+  const sources = useStore((s) => s.sources)
   const { openFile, openFileByPath } = usePdfDocument()
   const { handleMenuEvent } = useMenuActions()
 
@@ -47,22 +53,60 @@ export default function App() {
     | 'print'
     | 'watermark'
     | 'pageNumber'
+    | 'image'
     | 'stamp'
     | 'exportImage'
     | 'ocr'
     | 'metadata'
+    | 'options'
   >(null)
   const [isInitialized, setIsInitialized] = useState(false)
+  const [organize, setOrganize] = useState(false)
+  const [closeTarget, setCloseTarget] = useState<typeof sources | null>(null)
+  const closeDocument = useCallback(() => {
+    useStore.getState().setDocument(null)
+    releasePdfDocuments()
+    setCloseTarget(null)
+    setModal(null)
+    setOrganize(false)
+  }, [])
+  const requestCloseDocument = useCallback(() => {
+    const current = useStore.getState()
+    if (!current.document || current.isLoading || window.document.querySelector('[role="dialog"]')) return
+    if (current.isDirty) setCloseTarget(current.sources)
+    else closeDocument()
+  }, [closeDocument])
+  useEffect(() => {
+    window.addEventListener('workspace:close-document', requestCloseDocument)
+    return () => window.removeEventListener('workspace:close-document', requestCloseDocument)
+  }, [requestCloseDocument])
+  useEffect(() => {
+    if (closeTarget && sources !== closeTarget) setCloseTarget(null)
+  }, [sources, closeTarget])
+  useEffect(() => {
+    const show = () => setOrganize(true)
+    window.addEventListener('workspace:organize', show)
+    return () => window.removeEventListener('workspace:organize', show)
+  }, [])
+  useEffect(() => { if (!document) setOrganize(false) }, [document])
 
   // 테마를 <html data-theme> 에 적용
   useEffect(() => {
     document_root_setTheme(theme)
   }, [theme])
 
-  // 문서 변경(isDirty) 상태를 메인 프로세스에 동기화 (창 닫기 시 경고 확인용)
+  // Sync immediately and answer update safety checks from the current store, not a stale render.
   useEffect(() => {
-    window.workspace.setDocumentDirty?.(isDirty)
-  }, [isDirty])
+    window.workspace.setDocumentDirty?.(useStore.getState().isDirty)
+    const unsubscribe = useStore.subscribe((state, previous) => {
+      if (state.isDirty !== previous.isDirty) window.workspace.setDocumentDirty?.(state.isDirty)
+    })
+    const unsubscribeSafety = window.workspace.onUpdateSafetyCheck?.(() => {
+      const current = useStore.getState()
+      return !current.isDirty && !current.isLoading
+    })
+    return () => { unsubscribe(); unsubscribeSafety?.() }
+  }, [])
 
   // 시작 파일(.pdf 더블클릭) 및 앱 실행 중 외부 열기 이벤트 수신
   useEffect(() => {
@@ -128,6 +172,13 @@ export default function App() {
       setModal('print')
     }
     const onKeyDown = (e: KeyboardEvent) => {
+      const closeShortcut = (e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'w'
+      if (closeShortcut) {
+        e.preventDefault()
+        requestCloseDocument()
+        return
+      }
+      if (window.document.querySelector('[role="dialog"]')) return
       const target = e.target as HTMLElement | null
       const isInput =
         target &&
@@ -191,15 +242,17 @@ export default function App() {
       window.removeEventListener('trigger-print', onPrint)
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [handleMenuEvent, openFile])
+  }, [handleMenuEvent, openFile, requestCloseDocument])
 
   // 문서가 없을 때 드래그&드롭으로 열기 (자식 컴포넌트에서 stopPropagation/defaultPrevented 시 무시)
   useEffect(() => {
     const onDrop = async (e: DragEvent) => {
       if (e.defaultPrevented) return
       e.preventDefault()
+      if (window.document.querySelector('[role="dialog"]')) return
       const file = e.dataTransfer?.files[0]
       if (!file || file.type !== 'application/pdf') return
+      if (useStore.getState().isDirty && !confirm('저장하지 않은 변경 사항을 버리고 드롭한 문서를 여시겠습니까?')) return
       const arrayBuffer = await file.arrayBuffer()
       const bytes = new Uint8Array(arrayBuffer)
       const { loadPdfFromBytes } = await import('./hooks/usePdfDocument')
@@ -223,14 +276,41 @@ export default function App() {
         <SplashScreen onComplete={() => setIsInitialized(true)} />
       )}
       <MenuToolbar onOpenModal={setModal} />
+      <UpdateNotice onDetails={() => setModal('about')} />
+      {document && <div className="document-workspace-bar">
+        <span className="document-workspace-bar__name">{document.fileName}{isDirty ? ' · 수정됨' : ''}</span>
+        <div className="document-workspace-bar__modes">
+          <button aria-pressed={!organize} onClick={() => setOrganize(false)}>문서 보기</button>
+          <button aria-pressed={organize} onClick={() => setOrganize(true)}>페이지 정리</button>
+          <button onClick={() => setModal('merge')}>PDF 병합</button>
+          <button title="문서 닫기 (Ctrl+W)" onClick={requestCloseDocument} disabled={isLoading}>문서 닫기</button>
+        </div>
+      </div>}
+      <div id="text-edit-notice" />
       <div className="app__body">
-        <ThumbnailPanel />
-        <ViewerPanel onOpenFile={openFile} />
+        {!organize && <ThumbnailPanel />}
+        {organize && document
+          ? <PageOrganizer onRead={() => setOrganize(false)} onCrop={() => setModal('crop')} onMerge={() => setModal('merge')} />
+          : <ViewerPanel onOpenFile={openFile} />}
       </div>
       <StatusBar />
+      {closeTarget && document && <CloseDocumentModal
+        fileName={document.fileName}
+        onCancel={() => setCloseTarget(null)}
+        onDiscard={() => { if (useStore.getState().sources === closeTarget) closeDocument() }}
+        onSave={async () => {
+          const saved = await saveCurrentDocument(true)
+          if (saved && useStore.getState().sources === closeTarget && !useStore.getState().isDirty) {
+            closeDocument()
+            return true
+          }
+          return false
+        }}
+      />}
       {document === null && modal === null && null}
       {modal === 'merge' && <MergeModal onClose={() => setModal(null)} />}
       {modal === 'split' && <SplitModal onClose={() => setModal(null)} />}
+      {modal === 'options' && <OptionsModal onClose={() => setModal(null)} />}
       {modal === 'about' && <AboutModal onClose={() => setModal(null)} />}
       {modal === 'shortcuts' && <ShortcutsModal onClose={() => setModal(null)} />}
       {modal === 'normalize' && <NormalizeModal onClose={() => setModal(null)} />}
@@ -238,6 +318,7 @@ export default function App() {
       {modal === 'print' && <PrintModal onClose={() => setModal(null)} />}
       {modal === 'watermark' && <WatermarkModal onClose={() => setModal(null)} />}
       {modal === 'pageNumber' && <PageNumberModal onClose={() => setModal(null)} />}
+      {modal === 'image' && <StampModal initialTab="image" onClose={() => setModal(null)} />}
       {modal === 'stamp' && <StampModal onClose={() => setModal(null)} />}
       {modal === 'exportImage' && <ExportImageModal onClose={() => setModal(null)} />}
       {modal === 'ocr' && <OcrModal onClose={() => setModal(null)} />}

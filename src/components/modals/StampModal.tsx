@@ -10,6 +10,7 @@ import type { Annotation } from '../../../electron/shared/types'
 
 interface Props {
   onClose: () => void
+  initialTab?: TabType
 }
 
 type TabType = 'stamp' | 'signature' | 'image'
@@ -38,13 +39,13 @@ const SIGNATURE_COLORS = [
   { label: '적색', color: '#d92d20' }
 ]
 
-export function StampModal({ onClose }: Props) {
+export function StampModal({ onClose, initialTab = 'stamp' }: Props) {
   const currentPage = useStore((s) => s.currentPage)
   const addAnnotation = useStore((s) => s.addAnnotation)
   const selectAnnotation = useStore((s) => s.selectAnnotation)
   const setActiveTool = useStore((s) => s.setActiveTool)
 
-  const [activeTab, setActiveTab] = useState<TabType>('stamp')
+  const [activeTab, setActiveTab] = useState<TabType>(initialTab)
 
   // ── 탭 1: 스탬프 상태 ──
   const [stampText, setStampText] = useState('승인 (APPROVED)')

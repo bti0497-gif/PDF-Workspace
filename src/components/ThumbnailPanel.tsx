@@ -1,3 +1,8 @@
+import { readPageGeometries } from '../hooks/usePdfDocument'
+import './thumbnail-grid.css'
+
+type ThumbnailGridColumns = 1 | 2 | 3
+
 /**
  * 왼쪽 사이드바 패널 (60FPS 무지연 썸네일 D&D & 북마크 목차)
  *
@@ -32,7 +37,6 @@ export function ThumbnailPanel() {
   const setSidebarTab = useStore((s) => s.setSidebarTab)
   const setThumbnailSize = useStore((s) => s.setThumbnailSize)
   const setSidebarWidth = useStore((s) => s.setSidebarWidth)
-  const setSelectionColor = useStore((s) => s.setSelectionColor)
   const selectPage = useStore((s) => s.selectPage)
   const selectAllPages = useStore((s) => s.selectAllPages)
   const clearPageSelection = useStore((s) => s.clearPageSelection)
@@ -52,6 +56,8 @@ export function ThumbnailPanel() {
   const rafIdRef = useRef<number | null>(null)
 
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null)
+  const gridColumns = useStore((s) => s.thumbnailColumns)
+  const setGridColumns = useStore((s) => s.setThumbnailColumns)
 
   // 러버밴드 마키(Marquee) 영역 선택 상태
   const [marqueeBox, setMarqueeBox] = useState<{
@@ -206,6 +212,9 @@ export function ThumbnailPanel() {
 
   // 키보드 단축키 핸들러
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Modal dialogs own keyboard interaction; never alter thumbnail selection behind them.
+    if (document.querySelector('[role="dialog"]')) return
+
     const isCmdOrCtrl = e.ctrlKey || e.metaKey
 
     if (isCmdOrCtrl && e.key.toLowerCase() === 'a') {
@@ -247,7 +256,8 @@ export function ThumbnailPanel() {
     }
   }
 
-  // 드래그 오버 핸들러 (React 상태 변경 없이 RAF로 60fps 인디케이터 추적)
+  // 드래그 오버 핸들러. Drop slots use the actual grid card rectangles rather than
+  // a single-column Y scan, so explicit 1/2/3-column layouts keep correct ordering.
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
@@ -257,31 +267,45 @@ export function ThumbnailPanel() {
     const indicator = indicatorRef.current
     if (!container || !indicator) return
 
-    const clientY = e.clientY
     const items = Array.from(container.querySelectorAll<HTMLElement>('.thumbnail'))
     if (items.length === 0) return
 
-    let dropIndex = items.length
-    let indicatorTop = items[items.length - 1].offsetTop + items[items.length - 1].offsetHeight + 4
+    const containerRect = container.getBoundingClientRect()
+    const rects = items.map((item) => item.getBoundingClientRect())
+    const lastBottom = Math.max(...rects.map((rect) => rect.bottom))
+    let targetItemIndex = 0
+    let before = true
 
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i]
-      const rect = item.getBoundingClientRect()
-      const midY = rect.top + rect.height / 2
-
-      if (clientY < midY) {
-        dropIndex = i
-        indicatorTop = item.offsetTop - 5
-        break
-      }
+    if (e.clientY > lastBottom + 8) {
+      targetItemIndex = items.length - 1
+      before = false
+    } else {
+      let closestDistance = Number.POSITIVE_INFINITY
+      rects.forEach((rect, index) => {
+        const dx = e.clientX - (rect.left + rect.width / 2)
+        const dy = e.clientY - (rect.top + rect.height / 2)
+        const distance = dx * dx + dy * dy
+        if (distance < closestDistance) {
+          closestDistance = distance
+          targetItemIndex = index
+        }
+      })
+      before = e.clientY < rects[targetItemIndex].top + rects[targetItemIndex].height / 2
     }
+
+    const targetRect = rects[targetItemIndex]
+    const dropIndex = before ? targetItemIndex : targetItemIndex + 1
+    const indicatorLeft = targetRect.left - containerRect.left + container.scrollLeft
+    const indicatorTop =
+      targetRect.top - containerRect.top + container.scrollTop + (before ? -4 : targetRect.height + 1)
 
     targetDropIndexRef.current = dropIndex
 
     if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current)
     rafIdRef.current = requestAnimationFrame(() => {
       indicator.style.display = 'block'
-      indicator.style.transform = `translateY(${indicatorTop}px)`
+      indicator.style.width = `${targetRect.width}px`
+      indicator.style.transform = `translate(${indicatorLeft}px, ${indicatorTop}px)`
     })
   }, [])
 
@@ -336,11 +360,11 @@ export function ThumbnailPanel() {
 
               const loadedDoc = await getOrLoadPdfDoc(sourceId, bytes)
 
-              let dimensions: { width: number; height: number } | undefined
+              let dimensions: { width: number; height: number; pageGeometries?: { width: number; height: number; rotation: number }[] } | undefined
               try {
                 const page1 = await loadedDoc.getPage(1)
-                const v1 = page1.getViewport({ scale: 1 })
-                dimensions = { width: v1.width, height: v1.height }
+                const v1 = page1.getViewport({ scale: 1, rotation: 0 })
+                dimensions = { width: v1.width, height: v1.height, pageGeometries: await readPageGeometries(loadedDoc) }
               } catch {
                 /* fallback */
               }
@@ -445,11 +469,11 @@ export function ThumbnailPanel() {
 
         const loadedDoc = await getOrLoadPdfDoc(sourceId, bytes)
 
-        let dimensions: { width: number; height: number } | undefined
+        let dimensions: { width: number; height: number; pageGeometries?: { width: number; height: number; rotation: number }[] } | undefined
         try {
           const page1 = await loadedDoc.getPage(1)
-          const v1 = page1.getViewport({ scale: 1 })
-          dimensions = { width: v1.width, height: v1.height }
+          const v1 = page1.getViewport({ scale: 1, rotation: 0 })
+          dimensions = { width: v1.width, height: v1.height, pageGeometries: await readPageGeometries(loadedDoc) }
         } catch {
           /* fallback */
         }
@@ -540,8 +564,8 @@ export function ThumbnailPanel() {
               <span className="thumbnail-controls__badge">크기:</span>
               <button
                 className={`thumbnail-controls__btn ${thumbnailSize <= 120 ? 'thumbnail-controls__btn--active' : ''}`}
-                onClick={() => setThumbnailSize(110)}
-                title="작은 썸네일 (110px)"
+                onClick={() => setThumbnailSize(72)}
+                title="작은 썸네일 (72px)"
               >
                 소
               </button>
@@ -560,92 +584,35 @@ export function ThumbnailPanel() {
                 대
               </button>
             </div>
-            <div className="thumbnail-controls__group">
-              <input
-                type="range"
-                className="thumbnail-controls__slider"
-                min={96}
-                max={260}
-                step={4}
-                value={thumbnailSize}
-                onChange={(e) => setThumbnailSize(Number(e.target.value))}
-                title={`썸네일 폭: ${thumbnailSize}px (Ctrl+휠 조절 가능)`}
-              />
-              <span className="thumbnail-controls__badge">{thumbnailSize}px</span>
-            </div>
-          </div>
-
-          {/* 2행: 선택 퀵 바 */}
-          <div className="thumbnail-controls__row">
-            <div className="thumbnail-controls__group">
-              <button
-                className="thumbnail-controls__btn"
-                onClick={() => selectPagesByPredicate('all')}
-                title="전체 페이지 선택 (Ctrl+A)"
-              >
-                전체
-              </button>
-              <button
-                className="thumbnail-controls__btn"
-                onClick={() => selectPagesByPredicate('even')}
-                title="짝수 페이지 선택 (2, 4, 6...)"
-              >
-                짝수
-              </button>
-              <button
-                className="thumbnail-controls__btn"
-                onClick={() => selectPagesByPredicate('odd')}
-                title="홀수 페이지 선택 (1, 3, 5...)"
-              >
-                홀수
-              </button>
-              <button
-                className="thumbnail-controls__btn"
-                onClick={() => selectPagesByPredicate('invert')}
-                title="선택 반전"
-              >
-                반전
-              </button>
-              <button
-                className="thumbnail-controls__btn"
-                onClick={() => selectPagesByPredicate('none')}
-                title="선택 해제 (Esc)"
-              >
-                해제
-              </button>
-            </div>
-            <span className="thumbnail-controls__badge">
-              선택 {selectedPageIndices.length} / {pages.length}
-            </span>
-          </div>
-
-          {/* 3행: 선택 강조 색상 팔레트 */}
-          <div className="thumbnail-controls__row">
-            <span className="thumbnail-controls__badge">강조색:</span>
-            <div className="thumbnail-controls__swatches">
-              {[
-                { color: '#10b981', label: '에메랄드 그린' },
-                { color: '#f59e0b', label: '앰버 골드' },
-                { color: '#0e6fd6', label: '더존 블루' },
-                { color: '#f43f5e', label: '코랄 레드' },
-                { color: '#8b5cf6', label: '퍼플' }
-              ].map((swatch) => (
+            <div className="thumbnail-controls__group thumbnail-controls__layout" aria-label="썸네일 열 수">
+              <span className="thumbnail-controls__layout-label">열:</span>
+              {([1, 2, 3] as ThumbnailGridColumns[]).map((columns) => (
                 <button
-                  key={swatch.color}
-                  className={`thumbnail-controls__swatch ${selectionColor === swatch.color ? 'thumbnail-controls__swatch--active' : ''}`}
-                  style={{ backgroundColor: swatch.color }}
-                  onClick={() => setSelectionColor(swatch.color)}
-                  title={swatch.label}
-                />
+                  key={columns}
+                  className={`thumbnail-controls__btn thumbnail-controls__layout-button ${gridColumns === columns ? 'thumbnail-controls__btn--active' : ''}`}
+                  onClick={() => setGridColumns(columns)}
+                  title={`${columns}열 레이아웃`}
+                  aria-pressed={gridColumns === columns}
+                >
+                  {columns}
+                </button>
               ))}
-              <input
-                type="color"
-                className="thumbnail-controls__color-input"
-                value={selectionColor}
-                onChange={(e) => setSelectionColor(e.target.value)}
-                title="사용자 지정 강조색 선택"
-              />
             </div>
+
+          </div>
+
+          {/* 페이지 선택은 작업 명령, 색상/정밀 크기는 옵션 화면에서 관리 */}
+          <div className="thumbnail-controls__row">
+            <select className="thumbnail-controls__selection-menu" aria-label="페이지 선택 작업" value=""
+              onChange={e => { if (e.target.value) selectPagesByPredicate(e.target.value as 'all' | 'none' | 'even' | 'odd' | 'invert') }}>
+              <option value="" disabled>페이지 선택</option>
+              <option value="all">전체 선택</option>
+              <option value="none">선택 해제</option>
+              <option value="even">짝수 페이지</option>
+              <option value="odd">홀수 페이지</option>
+              <option value="invert">선택 반전</option>
+            </select>
+            <span className="thumbnail-controls__badge">선택 {selectedPageIndices.length} / {pages.length}</span>
           </div>
         </div>
       )}
@@ -671,7 +638,7 @@ export function ThumbnailPanel() {
           onDrop={handleDrop}
         >
           {/* RAF로 제어되는 초경량 드롭 인디케이터 (삽입선) */}
-          <div ref={indicatorRef} className="thumbnail-drop-indicator" />
+          <div ref={indicatorRef} className="thumbnail-drop-indicator thumbnail-grid-drop-indicator" />
 
           {/* 러버밴드 마키 박스 */}
           {marqueeBox && (
@@ -687,7 +654,11 @@ export function ThumbnailPanel() {
           )}
 
           {/* 반응형 다열 CSS 그리드 썸네일 리스트 */}
-          <div ref={listRef} className="thumbnail-panel__list">
+          <div
+            ref={listRef}
+            className="thumbnail-panel__list thumbnail-panel__grid"
+            style={{ '--thumbnail-columns': gridColumns } as React.CSSProperties}
+          >
             {pages.map((vPage, index) => {
               const isSelected = selectedPageIndices.includes(index)
               const isActive = index === currentPage

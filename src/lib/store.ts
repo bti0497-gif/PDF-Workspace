@@ -32,7 +32,7 @@ import type {
 } from '../core/domain/page'
 import type { SourceDocument } from '../core/domain/document'
 import { ROOT_DOC_ID } from '../core/domain/document'
-import { generateBookmarkId, type BookmarkNode } from '../core/domain/bookmark'
+import { bindBookmarkTargets, remapBookmarkTargets, generateBookmarkId, type BookmarkNode } from '../core/domain/bookmark'
 
 /** 하위 호환성을 위한 현재 로드된 문서 메타 정보 */
 export interface DocumentMeta {
@@ -41,6 +41,8 @@ export interface DocumentMeta {
   fileName: string
   pageCount: number
   rotations: number[]
+  pageGeometries?: { width: number; height: number; rotation: number }[]
+  bookmarks?: BookmarkNode[]
 }
 
 export type ToolType = 'select' | AnnotationType | 'text-edit'
@@ -111,6 +113,7 @@ interface AppState {
   sidebarTab: SidebarTab
   bookmarks: BookmarkNode[]
   thumbnailSize: number
+  thumbnailColumns: 1 | 2 | 3
   sidebarWidth: number
   selectionColor: string
 
@@ -149,7 +152,7 @@ interface AppState {
 
   // ── 액션 ──
   setDocumentMetadata: (meta: DocumentMetadata) => void
-  setDocument: (doc: DocumentMeta | null, dimensions?: { width: number; height: number }) => void
+  setDocument: (doc: DocumentMeta | null, dimensions?: { width: number; height: number; pageGeometries?: { width: number; height: number; rotation: number }[] }) => void
   setDirty: (dirty: boolean) => void
   setLoading: (loading: boolean) => void
   setLoadingProgress: (progress: LoadingProgress | null) => void
@@ -157,6 +160,7 @@ interface AppState {
   setBookmarks: (bookmarks: BookmarkNode[]) => void
   addBookmark: (title: string, pageIndex: number) => void
   removeBookmark: (id: string) => void
+  setThumbnailColumns: (columns: 1 | 2 | 3) => void
   setThumbnailSize: (size: number) => void
   setSidebarWidth: (width: number) => void
   setSelectionColor: (color: string) => void
@@ -174,6 +178,7 @@ interface AppState {
   resetZoom: () => void
 
   toggleThumbnails: () => void
+  setTheme: (theme: ThemeMode) => void
   toggleTheme: () => void
 
   setActiveTool: (tool: ToolType) => void
@@ -228,7 +233,7 @@ interface AppState {
     bytes: Uint8Array,
     pageCount: number,
     insertIndex: number,
-    dimensions?: { width: number; height: number }
+    dimensions?: { width: number; height: number; pageGeometries?: { width: number; height: number; rotation: number }[] }
   ) => void
   insertPdfPagesAt: (
     sourceId: string,
@@ -236,11 +241,16 @@ interface AppState {
     bytes: Uint8Array,
     pageCount: number,
     insertIndex: number,
-    dimensions?: { width: number; height: number }
+    dimensions?: { width: number; height: number; pageGeometries?: { width: number; height: number; rotation: number }[] }
   ) => void
 
   undo: () => void
   redo: () => void
+}
+
+function loadThumbnailColumns(): 1 | 2 | 3 {
+  const saved = Number(loadPreference('douzone_pdf_thumbnail_grid_columns', 2))
+  return saved === 1 || saved === 2 || saved === 3 ? saved : 2
 }
 
 const MIN_ZOOM = 0.25
@@ -256,7 +266,8 @@ export const useStore = create<AppState>((set, get) => ({
 
   sidebarTab: 'thumbnails',
   bookmarks: [],
-  thumbnailSize: Math.max(96, Math.min(260, Number(loadPreference('douzone_pdf_thumb_size', 156)) || 156)),
+  thumbnailColumns: loadThumbnailColumns(),
+  thumbnailSize: Math.max(72, Math.min(260, Number(loadPreference('douzone_pdf_thumb_size', 96)) || 96)),
   sidebarWidth: Math.max(170, Math.min(640, Number(loadPreference('douzone_pdf_sidebar_width', 220)) || 220)),
   selectionColor: loadPreference('douzone_pdf_selection_color', '#10b981') || '#10b981',
 
@@ -266,7 +277,7 @@ export const useStore = create<AppState>((set, get) => ({
   viewMode: 'continuous',
   zoom: 1,
   thumbnailsVisible: true,
-  theme: 'dark',
+  theme: loadPreference<ThemeMode>('workspace_theme', 'light'),
 
   activeTool: 'select',
   toolColor: '#ffeb3b',
@@ -292,6 +303,16 @@ export const useStore = create<AppState>((set, get) => ({
     if (!doc) {
       set({
         document: null,
+        isLoading: false,
+        loadingProgress: null,
+        activeTool: 'select',
+        searchQuery: '',
+        searchMatches: [],
+        activeMatchIndex: -1,
+        searchBarVisible: false,
+        copiedAnnotation: null,
+        sidebarTab: 'thumbnails',
+        zoom: 1,
         pages: [],
         sources: new Map(),
         bookmarks: [],
@@ -307,7 +328,10 @@ export const useStore = create<AppState>((set, get) => ({
       return
     }
 
-    const pages = createInitialVirtualPages(ROOT_DOC_ID, doc.pageCount, doc.rotations, dimensions)
+    const pages = createInitialVirtualPages(ROOT_DOC_ID, doc.pageCount, doc.rotations, dimensions).map((p, i) => {
+      const g = doc.pageGeometries?.[i]
+      return g ? { ...p, width: g.width, height: g.height, rotation: g.rotation } : p
+    })
     const sources = new Map<string, SourceDocument>()
     sources.set(ROOT_DOC_ID, {
       id: ROOT_DOC_ID,
@@ -319,6 +343,7 @@ export const useStore = create<AppState>((set, get) => ({
 
     set({
       document: doc,
+      bookmarks: bindBookmarkTargets(doc.bookmarks ?? [], pages),
       pages,
       sources,
       currentPage: 0,
@@ -364,8 +389,13 @@ export const useStore = create<AppState>((set, get) => ({
       isDirty: true
     }))
   },
+  setThumbnailColumns: (columns) => {
+    if (![1, 2, 3].includes(columns)) return
+    savePreference('douzone_pdf_thumbnail_grid_columns', columns)
+    set({ thumbnailColumns: columns })
+  },
   setThumbnailSize: (size) => {
-    const clamped = Math.max(96, Math.min(260, Math.round(size)))
+    const clamped = Math.max(72, Math.min(260, Math.round(size)))
     savePreference('douzone_pdf_thumb_size', clamped)
     set({ thumbnailSize: clamped })
   },
@@ -505,7 +535,8 @@ export const useStore = create<AppState>((set, get) => ({
   resetZoom: () => set({ zoom: 1 }),
 
   toggleThumbnails: () => set((s) => ({ thumbnailsVisible: !s.thumbnailsVisible })),
-  toggleTheme: () => set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
+  setTheme: (theme) => { savePreference('workspace_theme', theme); set({ theme }) },
+  toggleTheme: () => set((s) => { const theme = s.theme === 'dark' ? 'light' : 'dark'; savePreference('workspace_theme', theme); return { theme } }),
 
   setActiveTool: (tool) => set({ activeTool: tool, selectedAnnotationId: null }),
   setToolColor: (color) => {
@@ -925,7 +956,10 @@ export const useStore = create<AppState>((set, get) => ({
     })
 
     const safeIndex = Math.max(0, Math.min(pages.length, insertIndex))
-    const newPages = createInitialVirtualPages(sourceId, pageCount, undefined, dimensions)
+    const newPages = createInitialVirtualPages(sourceId, pageCount, undefined, dimensions).map((p, i) => {
+      const g = dimensions?.pageGeometries?.[i]
+      return g ? { ...p, width: g.width, height: g.height, rotation: g.rotation } : p
+    })
     const nextPages = insertVirtualPagesAt(pages, newPages, safeIndex)
 
     // 새로 삽입된 페이지들을 선택 상태로 지정
@@ -1007,3 +1041,11 @@ export const useStore = create<AppState>((set, get) => ({
     })
   }
 }))
+
+// Stable bookmark destinations follow pages, including undo/redo.
+useStore.subscribe((state, previous) => {
+  if (state.pages !== previous.pages && state.document && previous.document &&
+      state.sources.get(ROOT_DOC_ID) === previous.sources.get(ROOT_DOC_ID)) {
+    useStore.setState({ bookmarks: remapBookmarkTargets(state.bookmarks, previous.pages, state.pages) })
+  }
+})
