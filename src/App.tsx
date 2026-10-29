@@ -288,7 +288,7 @@ export default function App() {
       </div>}
       <div id="text-edit-notice" />
       <div className="app__body">
-        {!organize && <ThumbnailPanel />}
+        {document && !organize && <ThumbnailPanel />}
         {organize && document
           ? <PageOrganizer onRead={() => setOrganize(false)} onCrop={() => setModal('crop')} onMerge={() => setModal('merge')} />
           : <ViewerPanel onOpenFile={openFile} />}

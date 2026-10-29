@@ -5,7 +5,7 @@
  * - 창 너비·모니터 DPI에 맞춰 메뉴/도구 그룹을 자동 줄바꿈하고 리본 높이를 제한
  * - 📌 상시 고정 모드(기본값, localStorage 연동) ↔ 자동 숨김 플라이아웃 모드 지원
  */
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { useStore } from '../lib/store'
 import { usePdfDocument } from '../hooks/usePdfDocument'
 import {
@@ -88,8 +88,8 @@ export function MenuToolbar({ onOpenModal }: Props) {
   const { openFile } = usePdfDocument()
   const { handleMenuEvent } = useMenuActions()
 
-  // 리본 상태: 기본 activeTab='home', isPinned=true (localStorage 연동)
-  const [isPinned, setIsPinned] = useState<boolean>(() => {
+  // Preserve the document pin preference; the start screen uses a collapsed flyout.
+  const [pinnedPreference, setIsPinned] = useState<boolean>(() => {
     try {
       const saved = localStorage.getItem('pdf_ribbon_pinned')
       return saved !== null ? saved === 'true' : true
@@ -97,10 +97,25 @@ export function MenuToolbar({ onOpenModal }: Props) {
       return true
     }
   })
-  const [activeTab, setActiveTab] = useState<RibbonTab | null>('home')
-  useEffect(() => { if (!doc) setActiveTab('home') }, [doc])
+  const hasDocument = Boolean(doc)
+  const isPinned = hasDocument && pinnedPreference
+  const [activeTab, setActiveTab] = useState<RibbonTab | null>(() => isPinned ? 'home' : null)
   const containerRef = useRef<HTMLDivElement>(null)
   const leaveTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const previousHasDocument = useRef(hasDocument)
+
+  // Settle open/close layout before paint. Metadata saves must not reopen the ribbon.
+  useLayoutEffect(() => {
+    if (previousHasDocument.current === hasDocument) return
+    previousHasDocument.current = hasDocument
+    if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current)
+    leaveTimerRef.current = null
+    setActiveTab(isPinned ? 'home' : null)
+  }, [hasDocument, isPinned])
+
+  useEffect(() => () => {
+    if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current)
+  }, [])
 
   const pageCount = pages.length > 0 ? pages.length : doc?.pageCount ?? 0
   const targetIndices =
@@ -109,9 +124,9 @@ export function MenuToolbar({ onOpenModal }: Props) {
   // 로컬 스토리지에 핀 고정 상태 영속화
   useEffect(() => {
     try {
-      localStorage.setItem('pdf_ribbon_pinned', String(isPinned))
+      localStorage.setItem('pdf_ribbon_pinned', String(pinnedPreference))
     } catch {}
-  }, [isPinned])
+  }, [pinnedPreference])
 
   // 마우스 진입 시 닫기 타이머 취소
   const handleMouseEnter = () => {
@@ -1338,7 +1353,7 @@ export function MenuToolbar({ onOpenModal }: Props) {
 
             {/* 리본 우측 제어: 📌 핀 고정 토글 & 🔼 접기 버튼 */}
             <div className="ribbon-flyout__controls">
-              <button
+              {hasDocument && <button
                 className={`ribbon-pin-btn ${isPinned ? 'ribbon-pin-btn--pinned' : ''}`}
                 title={
                   isPinned
@@ -1348,7 +1363,7 @@ export function MenuToolbar({ onOpenModal }: Props) {
                 onClick={() => setIsPinned(!isPinned)}
               >
                 📌 {isPinned ? '고정됨' : '고정'}
-              </button>
+              </button>}
               <button
                 className="ribbon-close-btn"
                 title="리본 접기"

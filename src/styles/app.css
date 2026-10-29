@@ -47,7 +47,9 @@ html,
 body,
 #root {
   height: 100%;
-  overflow: hidden;
+  /* Only the viewer/panels scroll. Hidden permits focus/scrollIntoView to move
+     an overflowing outer shell and clip the menu; clip prevents that movement. */
+  overflow: clip;
 }
 
 body {
@@ -1131,7 +1133,11 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 100%;
+  flex: 0 0 auto;
+  width: 100%;
+  min-height: 100%;
+  padding: 24px;
+  text-align: center;
   gap: 16px;
   color: var(--color-text-muted);
 }

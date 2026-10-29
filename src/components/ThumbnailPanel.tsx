@@ -48,7 +48,12 @@ export function ThumbnailPanel() {
   const duplicatePages = useStore((s) => s.duplicatePages)
   const insertPagesFromDocument = useStore((s) => s.insertPagesFromDocument)
 
-  const containerRef = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const [scrollRoot, setScrollRoot] = useState<HTMLDivElement | null>(null)
+  const setScrollContainer = useCallback((node: HTMLDivElement | null) => {
+    containerRef.current = node
+    setScrollRoot(node)
+  }, [])
   const listRef = useRef<HTMLDivElement>(null)
   const indicatorRef = useRef<HTMLDivElement>(null)
   const draggedIndexRef = useRef<number | null>(null)
@@ -113,7 +118,13 @@ export function ThumbnailPanel() {
     if (!container) return
     const activeThumb = container.querySelector<HTMLElement>(`.thumbnail[data-index="${currentPage}"]`)
     if (activeThumb) {
-      activeThumb.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      // Keep the active thumbnail visible without scrolling ancestors/header.
+      const pane = container.getBoundingClientRect()
+      const thumb = activeThumb.getBoundingClientRect()
+      const top = pane.top + container.clientTop
+      const bottom = top + container.clientHeight
+      const delta = thumb.top < top ? thumb.top - top : thumb.bottom > bottom ? thumb.bottom - bottom : 0
+      if (delta) container.scrollTo({ top: container.scrollTop + delta, behavior: 'smooth' })
     }
   }, [currentPage, sidebarTab])
 
@@ -415,18 +426,37 @@ export function ThumbnailPanel() {
     [pages.length, selectedPageIndices, insertPagesFromDocument, reorderPages, reorderMultiplePages]
   )
 
-  const handleContextMenu = (e: React.MouseEvent, index: number) => {
+  // Shared callbacks keep memoized items stable when only the active page changes.
+  const handleThumbnailSelect = useCallback((index: number, e: React.MouseEvent) => {
+    if (e.ctrlKey || e.metaKey) selectPage(index, 'toggle')
+    else if (e.shiftKey) selectPage(index, 'range')
+    else selectPage(index, 'single')
+  }, [selectPage])
+
+  const handleThumbnailToggleSelect = useCallback((index: number, e: React.MouseEvent) => {
+    e.stopPropagation()
+    selectPage(index, 'toggle')
+  }, [selectPage])
+
+  const handleThumbnailContextMenu = useCallback((index: number, e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    if (!selectedPageIndices.includes(index)) {
-      selectPage(index, 'single')
-    }
-    setContextMenu({
-      x: e.clientX,
-      y: e.clientY,
-      targetIndex: index
-    })
-  }
+    if (!useStore.getState().selectedPageIndices.includes(index)) useStore.getState().selectPage(index, 'single')
+    setContextMenu({ x: e.clientX, y: e.clientY, targetIndex: index })
+  }, [])
+
+  const handleThumbnailDragStart = useCallback((index: number, e: React.DragEvent) => {
+    draggedIndexRef.current = index
+    setDraggingIndex(index)
+    if (!useStore.getState().selectedPageIndices.includes(index)) useStore.getState().selectPage(index, 'single')
+    e.dataTransfer.setData('text/plain', String(index))
+    e.dataTransfer.effectAllowed = 'move'
+  }, [])
+
+  const handleThumbnailDragEnd = useCallback(() => {
+    draggedIndexRef.current = null
+    setDraggingIndex(null)
+  }, [])
 
   // 외부 PDF 삽입 다이얼로그 호출
   const handleInsertPdfDialog = async (insertIndex: number) => {
@@ -628,7 +658,7 @@ export function ThumbnailPanel() {
         </div>
       ) : (
         <div
-          ref={containerRef}
+          ref={setScrollContainer}
           className="sidebar__content"
           tabIndex={0}
           onMouseDown={handleContainerMouseDown}
@@ -674,29 +704,12 @@ export function ThumbnailPanel() {
                   isDragging={isDragging}
                   dragCount={dragCount}
                   thumbnailSize={thumbnailSize}
-                  onSelect={(e) => {
-                    if (e.ctrlKey || e.metaKey) selectPage(index, 'toggle')
-                    else if (e.shiftKey) selectPage(index, 'range')
-                    else selectPage(index, 'single')
-                  }}
-                  onToggleSelect={(e) => {
-                    e.stopPropagation()
-                    selectPage(index, 'toggle')
-                  }}
-                  onContextMenu={(e) => handleContextMenu(e, index)}
-                  onDragStart={(e) => {
-                    draggedIndexRef.current = index
-                    setDraggingIndex(index)
-                    if (!selectedPageIndices.includes(index)) {
-                      selectPage(index, 'single')
-                    }
-                    e.dataTransfer.setData('text/plain', String(index))
-                    e.dataTransfer.effectAllowed = 'move'
-                  }}
-                  onDragEnd={() => {
-                    draggedIndexRef.current = null
-                    setDraggingIndex(null)
-                  }}
+                  scrollRoot={scrollRoot}
+                  onSelect={handleThumbnailSelect}
+                  onToggleSelect={handleThumbnailToggleSelect}
+                  onContextMenu={handleThumbnailContextMenu}
+                  onDragStart={handleThumbnailDragStart}
+                  onDragEnd={handleThumbnailDragEnd}
                 />
               )
             })}
@@ -811,11 +824,12 @@ interface ThumbItemProps {
   isDragging: boolean
   dragCount: number
   thumbnailSize: number
-  onSelect: (e: React.MouseEvent) => void
-  onToggleSelect: (e: React.MouseEvent) => void
-  onContextMenu: (e: React.MouseEvent) => void
-  onDragStart: (e: React.DragEvent) => void
-  onDragEnd: (e: React.DragEvent) => void
+  scrollRoot: HTMLDivElement | null
+  onSelect: (index: number, e: React.MouseEvent) => void
+  onToggleSelect: (index: number, e: React.MouseEvent) => void
+  onContextMenu: (index: number, e: React.MouseEvent) => void
+  onDragStart: (index: number, e: React.DragEvent) => void
+  onDragEnd: () => void
 }
 
 const ThumbnailItem = memo(function ThumbnailItem({
@@ -826,6 +840,7 @@ const ThumbnailItem = memo(function ThumbnailItem({
   isDragging,
   dragCount,
   thumbnailSize,
+  scrollRoot,
   onSelect,
   onToggleSelect,
   onContextMenu,
@@ -835,8 +850,8 @@ const ThumbnailItem = memo(function ThumbnailItem({
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isVisible, setIsVisible] = useState(false)
-  const renderedRotation = useRef<number | null>(null)
-  const renderedSize = useRef<number | null>(null)
+  const renderedIdentity = useRef<string | null>(null)
+  const renderTaskRef = useRef<{ cancel: () => void; promise: Promise<unknown> } | null>(null)
   const isMounted = useRef(true)
 
   useEffect(() => {
@@ -846,108 +861,85 @@ const ThumbnailItem = memo(function ThumbnailItem({
     }
   }, [])
 
-  // 썸네일 가상화: 뷰포트 인근(상하 350px)에 진입했을 때만 렌더링 활성화
+  // Bound canvases to the sidebar scrollport; leaving this window unmounts the bitmap.
   useEffect(() => {
     const el = containerRef.current
-    if (!el) return
-
+    if (!el || !scrollRoot) return
     const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting) {
-          setIsVisible(true)
-        }
-      },
-      {
-        rootMargin: '350px 0px 350px 0px',
-        threshold: 0
-      }
+      ([entry]) => setIsVisible(entry.isIntersecting),
+      { root: scrollRoot, rootMargin: '600px 0px 600px 0px', threshold: 0 }
     )
-
     observer.observe(el)
     return () => observer.disconnect()
-  }, [])
+  }, [scrollRoot])
 
-  // 썸네일 렌더링 (화면에 보이고, 회전 또는 썸네일 크기 변경 시에만 다시 그리기)
+  useEffect(() => {
+    if (!isVisible) renderedIdentity.current = null
+  }, [isVisible])
+
+  // A canvas has one active PDF.js render task at a time.
   useEffect(() => {
     if (!isVisible) return
-    if (
-      renderedRotation.current === virtualPage.rotation &&
-      renderedSize.current === thumbnailSize
-    ) {
-      return
-    }
-    let cancelled = false
+    const identity = [virtualPage.sourceDocId, virtualPage.sourcePageIndex, virtualPage.rotation, thumbnailSize].join(':')
+    if (renderedIdentity.current === identity) return
 
+    let cancelled = false
+    let task: { cancel: () => void; promise: Promise<unknown> } | null = null
     const render = async () => {
+      const previous = renderTaskRef.current
+      if (previous) {
+        previous.cancel()
+        try { await previous.promise } catch { /* expected cancellation */ }
+      }
+      if (cancelled || !isMounted.current) return
+
       const doc = getPdfDoc(virtualPage.sourceDocId)
       const canvas = canvasRef.current
       if (!doc || !canvas) return
-
       try {
         const page = await doc.getPage(virtualPage.sourcePageIndex + 1)
-        if (cancelled || !isMounted.current) return
-
+        if (cancelled || !isMounted.current || canvasRef.current !== canvas) return
         const baseViewport = page.getViewport({ scale: 1 })
         const scale = (thumbnailSize / baseViewport.width) * window.devicePixelRatio
-        const viewport = page.getViewport({
-          scale,
-          rotation: virtualPage.rotation
-        })
-
+        const viewport = page.getViewport({ scale, rotation: virtualPage.rotation })
         const ctx = canvas.getContext('2d', { alpha: false })
         if (!ctx) return
-
         canvas.width = Math.floor(viewport.width)
         canvas.height = Math.floor(viewport.height)
         canvas.style.width = `${thumbnailSize}px`
         canvas.style.height = `${(thumbnailSize / viewport.width) * viewport.height}px`
-
         ctx.fillStyle = '#ffffff'
         ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-        await page.render({
-          canvasContext: ctx,
-          viewport,
-          canvas
-        } as Parameters<typeof page.render>[0]).promise
-
-        if (!cancelled && isMounted.current) {
-          renderedRotation.current = virtualPage.rotation
-          renderedSize.current = thumbnailSize
-        }
+        task = page.render({ canvasContext: ctx, viewport, canvas } as Parameters<typeof page.render>[0])
+        renderTaskRef.current = task
+        await task.promise
+        if (!cancelled && isMounted.current && canvasRef.current === canvas) renderedIdentity.current = identity
       } catch (err) {
         if (!cancelled) console.error(`썸네일 ${index + 1} 렌더링 실패:`, err)
+      } finally {
+        if (renderTaskRef.current === task) renderTaskRef.current = null
       }
     }
 
-    const win = window as unknown as {
-      requestIdleCallback?: (cb: () => void) => number
-      cancelIdleCallback?: (id: number) => void
-    }
-    const timer =
-      typeof win.requestIdleCallback === 'function'
-        ? win.requestIdleCallback(() => void render())
-        : window.setTimeout(() => void render(), 30)
-
+    const win = window as unknown as { requestIdleCallback?: (cb: () => void) => number; cancelIdleCallback?: (id: number) => void }
+    const timer = typeof win.requestIdleCallback === 'function' ? win.requestIdleCallback(() => void render()) : window.setTimeout(() => void render(), 30)
     return () => {
       cancelled = true
-      if (
-        typeof win.cancelIdleCallback === 'function' &&
-        typeof win.requestIdleCallback === 'function'
-      ) {
-        win.cancelIdleCallback(timer)
-      } else {
-        clearTimeout(timer)
-      }
+      if (typeof win.cancelIdleCallback === 'function' && typeof win.requestIdleCallback === 'function') win.cancelIdleCallback(timer)
+      else clearTimeout(timer)
+      // Keep the cancelled task registered until its promise settles so the next
+      // effect waits before reusing this canvas.
+      task?.cancel()
     }
-  }, [
-    isVisible,
-    virtualPage.sourceDocId,
-    virtualPage.sourcePageIndex,
-    virtualPage.rotation,
-    thumbnailSize,
-    index
-  ])
+  }, [isVisible, virtualPage.sourceDocId, virtualPage.sourcePageIndex, virtualPage.rotation, thumbnailSize, index])
+
+  const displayWidth = virtualPage.rotation % 180 === 0
+    ? virtualPage.width ?? 595.28
+    : virtualPage.height ?? 841.89
+  const displayHeight = virtualPage.rotation % 180 === 0
+    ? virtualPage.height ?? 841.89
+    : virtualPage.width ?? 595.28
+  const displayAspectRatio = `${displayWidth} / ${displayHeight}`
 
   const classNames = [
     'thumbnail',
@@ -964,25 +956,32 @@ const ThumbnailItem = memo(function ThumbnailItem({
       className={classNames}
       data-index={index}
       draggable
-      onClick={onSelect}
-      onContextMenu={onContextMenu}
-      onDragStart={onDragStart}
+      onClick={(e) => onSelect(index, e)}
+      onContextMenu={(e) => onContextMenu(index, e)}
+      onDragStart={(e) => onDragStart(index, e)}
       onDragEnd={onDragEnd}
       style={{ width: `${thumbnailSize}px` }}
     >
       {/* 썸네일 좌상단 선택 체크박스 */}
       <div
         className={`thumbnail__checkbox ${isSelected ? 'thumbnail__checkbox--checked' : ''}`}
-        onClick={onToggleSelect}
+        onClick={(e) => onToggleSelect(index, e)}
         title="선택 토글"
       >
         {isSelected ? '✓' : ''}
       </div>
 
       {isVisible ? (
-        <canvas ref={canvasRef} className="thumbnail__canvas" />
+        <canvas
+          ref={canvasRef}
+          className="thumbnail__canvas"
+          style={{ aspectRatio: displayAspectRatio }}
+        />
       ) : (
-        <div className="thumbnail__placeholder" style={{ width: `${thumbnailSize}px` }}>
+        <div
+          className="thumbnail__placeholder"
+          style={{ width: `${thumbnailSize}px`, height: 'auto', minHeight: 0, aspectRatio: displayAspectRatio }}
+        >
           <span className="thumbnail__placeholder-icon">📄</span>
           <span className="thumbnail__placeholder-text">대기 중...</span>
         </div>

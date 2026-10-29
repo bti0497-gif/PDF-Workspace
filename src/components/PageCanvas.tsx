@@ -49,16 +49,14 @@ export function PageCanvas({ pageIndex, zoom, rotation }: Props) {
   useEffect(() => {
     const container = textLayerRef.current
     if (!container) return
-    let cancelled = false
-    ;(async () => {
-      try {
-        await renderTextLayer(container, pageIndex, zoom, rotation)
-      } catch (err) {
-        if (!cancelled) console.error('텍스트 레이어 오류:', err)
-      }
-    })()
+    const controller = new AbortController()
+    void renderTextLayer(container, pageIndex, zoom, rotation, controller.signal).catch((err) => {
+      if (!controller.signal.aborted) console.error('텍스트 레이어 오류:', err)
+    })
     return () => {
-      cancelled = true
+      controller.abort()
+      // getPage/getTextContent 대기 중 취소된 이전 레이어도 즉시 분리한다.
+      container.replaceChildren()
     }
   }, [pageIndex, zoom, rotation])
 

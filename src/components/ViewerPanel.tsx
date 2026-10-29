@@ -13,6 +13,7 @@ import { SearchBar } from './SearchBar'
 import { SearchHighlightLayer } from './SearchHighlightLayer'
 import { TextEditLayer } from './TextEditLayer'
 import { clearRenderCache } from '../hooks/usePdfRender'
+import { nearestPageByRow } from '../lib/nearest-page'
 import { usePdfDocument } from '../hooks/usePdfDocument'
 import { getRecentFiles, removeRecentFile, clearRecentFiles, RecentFileItem } from '../lib/recent-files'
 import type { VirtualPage } from '../core/domain/page'
@@ -132,7 +133,12 @@ export function ViewerPanel({ onOpenFile }: Props) {
       `[data-page="${currentPage}"]`
     )
     if (targetEl) {
-      targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      // Scroll only this pane, never the app shell/header after a size or DPI change.
+      const container = containerRef.current
+      container.scrollTo({
+        top: container.scrollTop + targetEl.getBoundingClientRect().top - container.getBoundingClientRect().top - container.clientTop,
+        behavior: 'smooth'
+      })
     }
 
     const timer = setTimeout(() => {
@@ -147,6 +153,9 @@ export function ViewerPanel({ onOpenFile }: Props) {
     const container = containerRef.current
     if (!container) return
 
+    // Rebuild only when the document/layout changes, not on every wheel frame.
+    const pageElements = Array.from(container.querySelectorAll<HTMLElement>('.viewer__virtual-page'))
+    const columns = viewMode === 'two-page' ? 2 : 1
     let rafId: number | null = null
 
     const onScroll = () => {
@@ -154,27 +163,16 @@ export function ViewerPanel({ onOpenFile }: Props) {
       if (rafId) cancelAnimationFrame(rafId)
 
       rafId = requestAnimationFrame(() => {
-        const pageElements = Array.from(
-          container.querySelectorAll<HTMLElement>('.viewer__virtual-page')
-        )
+        rafId = null
         if (pageElements.length === 0) return
 
         const containerRect = container.getBoundingClientRect()
         const centerY = containerRect.top + containerRect.height / 2
 
-        let closestPage = 0
-        let minDistance = Infinity
-
-        for (const el of pageElements) {
-          const rect = el.getBoundingClientRect()
-          const elMidY = rect.top + rect.height / 2
-          const dist = Math.abs(elMidY - centerY)
-
-          if (dist < minDistance) {
-            minDistance = dist
-            closestPage = parseInt(el.getAttribute('data-page') ?? '0', 10)
-          }
-        }
+        const closestPage = nearestPageByRow(pageElements.length, columns, centerY, index => {
+          const rect = pageElements[index].getBoundingClientRect()
+          return rect.top + rect.height / 2
+        })
 
         if (closestPage !== lastScrolledPageRef.current) {
           lastScrolledPageRef.current = closestPage
@@ -188,7 +186,7 @@ export function ViewerPanel({ onOpenFile }: Props) {
       container.removeEventListener('scroll', onScroll)
       if (rafId) cancelAnimationFrame(rafId)
     }
-  }, [viewMode, setCurrentPage])
+  }, [viewMode, setCurrentPage, pages])
 
   // 키보드 단축키 (페이지 이동)
   useEffect(() => {

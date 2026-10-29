@@ -11,27 +11,39 @@ import { getPdfDoc } from './usePdfDocument'
 import { useStore } from '../lib/store'
 import { ROOT_DOC_ID } from '../core/domain/document'
 
-/** 렌더링 결과 캐시 키: "소스ID:소스페이지:줌:회전" */
-const renderCache = new LRU<string, ImageBitmap>(32)
+const BITMAP_CACHE_LIMIT = 96 * 1024 * 1024
+/** 렌더링 결과 캐시 키: "소스ID:소스페이지:줌:회전:DPR" */
+const renderCache = new LRU<string, ImageBitmap>(
+  32,
+  BITMAP_CACHE_LIMIT,
+  (bitmap) => bitmap.width * bitmap.height * 4
+)
 const canvasJobs = new WeakMap<HTMLCanvasElement, { task?: pdfjsLib.RenderTask }>()
+let renderCacheGeneration = 0
+
+function currentDpr(): number {
+  return typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1
+}
 
 export function renderCacheKey(
   sourceDocId: string,
   sourcePageIndex: number,
   zoom: number,
-  rotation: number
+  rotation: number,
+  dpr = currentDpr()
 ): string {
-  return `${sourceDocId}:${sourcePageIndex}:${zoom.toFixed(2)}:${rotation}`
+  return `${sourceDocId}:${sourcePageIndex}:${zoom.toFixed(2)}:${rotation}:${dpr.toFixed(2)}`
 }
 
 /** 캐시에서 동일 페이지의 임의의 이전 비트맵(저해상도 프록시) 조회 */
 function findProxyBitmap(
   sourceDocId: string,
   sourcePageIndex: number,
-  rotation: number
+  rotation: number,
+  dpr: number
 ): ImageBitmap | undefined {
   const prefix = `${sourceDocId}:${sourcePageIndex}:`
-  const suffix = `:${rotation}`
+  const suffix = `:${rotation}:${dpr.toFixed(2)}`
   for (const key of renderCache.keys()) {
     if (key.startsWith(prefix) && key.endsWith(suffix)) {
       return renderCache.get(key)
@@ -42,6 +54,7 @@ function findProxyBitmap(
 
 /** 특정 페이지의 캐시 무효화 */
 export function invalidatePage(sourceDocId: string, sourcePageIndex: number): void {
+  renderCacheGeneration++
   const prefix = `${sourceDocId}:${sourcePageIndex}:`
   for (const key of renderCache.keys()) {
     if (key.startsWith(prefix)) {
@@ -52,6 +65,7 @@ export function invalidatePage(sourceDocId: string, sourcePageIndex: number): vo
 
 /** 전체 캐시 비움 */
 export function clearRenderCache(): void {
+  renderCacheGeneration++
   renderCache.clear()
 }
 
@@ -78,6 +92,7 @@ export async function renderPageToCanvas({
   canvasJobs.set(canvas, job)
   if (prior?.task) { prior.task.cancel(); await prior.task.promise.catch(() => {}) }
   if (signal?.aborted || canvasJobs.get(canvas) !== job) return { width: 0, height: 0 }
+  const generation = renderCacheGeneration
   const state = useStore.getState()
   const vPage = state.pages[pageIndex]
 
@@ -93,15 +108,16 @@ export async function renderPageToCanvas({
 
   const page = await doc.getPage(sourcePageIndex + 1) // pdfjs는 1-based
   if (signal?.aborted || canvasJobs.get(canvas) !== job) return { width: 0, height: 0 }
-  const viewport = page.getViewport({ scale: zoom * window.devicePixelRatio, rotation: pageRotation })
+  const dpr = currentDpr()
+  const viewport = page.getViewport({ scale: zoom * dpr, rotation: pageRotation })
 
-  const exactKey = renderCacheKey(sourceDocId, sourcePageIndex, zoom, pageRotation)
+  const exactKey = renderCacheKey(sourceDocId, sourcePageIndex, zoom, pageRotation, dpr)
   const cachedExact = renderCache.get(exactKey)
 
   canvas.width = Math.floor(viewport.width)
   canvas.height = Math.floor(viewport.height)
-  canvas.style.width = `${Math.floor(viewport.width / window.devicePixelRatio)}px`
-  canvas.style.height = `${Math.floor(viewport.height / window.devicePixelRatio)}px`
+  canvas.style.width = `${Math.floor(viewport.width / dpr)}px`
+  canvas.style.height = `${Math.floor(viewport.height / dpr)}px`
 
   // [1단계: 정확한 캐시 히트]
   if (cachedExact) {
@@ -112,7 +128,7 @@ export async function renderPageToCanvas({
   }
 
   // [2단계: 저해상도 프록시 프리뷰 즉각 렌더링 (흰 화면 방지)]
-  const proxy = findProxyBitmap(sourceDocId, sourcePageIndex, pageRotation)
+  const proxy = findProxyBitmap(sourceDocId, sourcePageIndex, pageRotation, dpr)
   if (proxy) {
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
@@ -130,23 +146,23 @@ export async function renderPageToCanvas({
   } as Parameters<typeof page.render>[0])
   job.task = renderTask
 
-  if (signal) {
-    signal.addEventListener('abort', () => {
-      try {
-        renderTask.cancel()
-      } catch {
-        /* noop */
-      }
-    }, { once: true })
+  const cancelRender = () => {
+    try { renderTask.cancel() } catch { /* noop */ }
   }
+  signal?.addEventListener('abort', cancelRender, { once: true })
 
   try {
     await renderTask.promise
+    if (signal?.aborted || canvasJobs.get(canvas) !== job) return { width: 0, height: 0 }
 
-    // 렌더링 결과를 ImageBitmap 으로 캐싱
-    if ('createImageBitmap' in window && !signal?.aborted) {
+    // Cache only the current generation; stale ImageBitmaps are immediately closed.
+    if ('createImageBitmap' in window && generation === renderCacheGeneration && canvas.width * canvas.height * 4 <= BITMAP_CACHE_LIMIT) {
       try {
         const bitmap = await createImageBitmap(canvas)
+        if (signal?.aborted || canvasJobs.get(canvas) !== job || generation !== renderCacheGeneration) {
+          bitmap.close()
+          return { width: 0, height: 0 }
+        }
         renderCache.set(exactKey, bitmap)
       } catch {
         /* noop */
@@ -157,6 +173,8 @@ export async function renderPageToCanvas({
       return { width: 0, height: 0 }
     }
     throw err
+  } finally {
+    signal?.removeEventListener('abort', cancelRender)
   }
 
   return { width: viewport.width, height: viewport.height }
@@ -169,8 +187,10 @@ export async function renderTextLayer(
   container: HTMLElement,
   pageIndex: number,
   zoom: number,
-  rotation: number
+  rotation: number,
+  signal?: AbortSignal
 ): Promise<void> {
+  if (signal?.aborted) return
   const state = useStore.getState()
   const vPage = state.pages[pageIndex]
 
@@ -182,9 +202,11 @@ export async function renderTextLayer(
   if (!doc) return
 
   const page = await doc.getPage(sourcePageIndex + 1)
+  if (signal?.aborted) return
   const viewport = page.getViewport({ scale: zoom, rotation: pageRotation })
 
   const textContent = await page.getTextContent()
+  if (signal?.aborted) return
   container.innerHTML = ''
   container.style.setProperty('--scale-factor', String(zoom))
 
@@ -193,7 +215,14 @@ export async function renderTextLayer(
     container,
     viewport
   })
-  await textLayer.render()
+  const cancelTextLayer = () => textLayer.cancel()
+  signal?.addEventListener('abort', cancelTextLayer, { once: true })
+  try {
+    if (signal?.aborted) return
+    await textLayer.render()
+  } finally {
+    signal?.removeEventListener('abort', cancelTextLayer)
+  }
 }
 
 /**

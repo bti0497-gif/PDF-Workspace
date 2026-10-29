@@ -9,6 +9,8 @@
 
 ## Next implementation agent
 
+Unreleased UI/scroll source changes are described in `CHANGELOG-UNRELEASED.md`. Do not confuse the working tree/build with the published 1.0.5 installer. Read that file before the next release.
+
 1. Start from the current committed version in `package.json` (1.0.5 at this handoff). Read its `CHANGELOG-<version>.md` and `RELEASE.md`; `DEVELOPMENT_GUIDE.md` is historical, not current status.
 2. Preserve `electron/update-controller.ts`: automatic check/download, explicit restart only, no install on normal quit, fresh renderer dirty/busy safety handshake before and after confirmation, input lock during final validation, fail closed on missing replies. `scripts/update-controller-regression.cjs` mocks the updater; it does not prove an actual install.
 3. Run locally: `npm ci`, `npm run typecheck`, `npm run test:regression`, `npm run build`, then `node node_modules/electron-builder/cli.js --win nsis --x64 --publish never`.
