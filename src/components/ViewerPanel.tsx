@@ -119,9 +119,9 @@ export function ViewerPanel({ onOpenFile }: Props) {
     }
   }, [currentPage, zoom, doc, viewMode])
 
-  // 연속 스크롤 모드: currentPage 가 썸네일/목차 클릭으로 변경되었을 때 해당 위치로 부드럽게 점프
+  // 연속/양면 스크롤 모드: currentPage 가 썸네일/목차 클릭으로 변경되었을 때 해당 위치로 부드럽게 점프
   useEffect(() => {
-    if (viewMode !== 'continuous' || !containerRef.current) return
+    if (viewMode === 'single' || !containerRef.current) return
     if (lastScrolledPageRef.current === currentPage) return
 
     lastScrolledPageRef.current = currentPage
@@ -140,9 +140,9 @@ export function ViewerPanel({ onOpenFile }: Props) {
     return () => clearTimeout(timer)
   }, [currentPage, viewMode])
 
-  // 연속 스크롤 모드: 스크롤 시 화면 중심에 있는 페이지 번호 실시간 감지 (썸네일/상태표시줄과 동기화)
+  // 연속/양면 스크롤 모드: 스크롤 시 화면 중심에 있는 페이지 번호 실시간 감지 (썸네일/상태표시줄과 동기화)
   useEffect(() => {
-    if (viewMode !== 'continuous') return
+    if (viewMode === 'single') return
     const container = containerRef.current
     if (!container) return
 

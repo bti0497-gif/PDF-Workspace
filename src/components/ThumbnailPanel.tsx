@@ -100,6 +100,17 @@ export function ThumbnailPanel() {
     }
   }, [])
 
+  // 뷰어 스크롤 동기화: currentPage 변경 시 좌측 썸네일도 해당 위치로 자동 스크롤
+  useEffect(() => {
+    if (sidebarTab !== 'thumbnails') return
+    const container = containerRef.current
+    if (!container) return
+    const activeThumb = container.querySelector<HTMLElement>(`.thumbnail[data-index="${currentPage}"]`)
+    if (activeThumb) {
+      activeThumb.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }, [currentPage, sidebarTab])
+
   // 사이드바 너비 드래그 조절기 (Resizer) 핸들러
   const handleResizerMouseDown = (e: React.MouseEvent) => {
     e.preventDefault()

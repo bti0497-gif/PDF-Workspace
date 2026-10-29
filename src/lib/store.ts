@@ -263,7 +263,7 @@ export const useStore = create<AppState>((set, get) => ({
   currentPage: 0,
   selectedPageIndices: [0],
   selectionAnchorIndex: 0,
-  viewMode: 'single',
+  viewMode: 'continuous',
   zoom: 1,
   thumbnailsVisible: true,
   theme: 'dark',
@@ -380,9 +380,17 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   setCurrentPage: (page) => {
-    const { pages } = get()
+    const { pages, selectedPageIndices } = get()
     const safePage = Math.max(0, Math.min(pages.length - 1, page))
-    set({ currentPage: safePage })
+    if (selectedPageIndices.length <= 1) {
+      set({
+        currentPage: safePage,
+        selectedPageIndices: [safePage],
+        selectionAnchorIndex: safePage
+      })
+    } else {
+      set({ currentPage: safePage })
+    }
   },
 
   setViewMode: (mode) => set({ viewMode: mode }),

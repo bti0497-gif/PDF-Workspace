@@ -114,20 +114,23 @@ body {
 .menu-bar {
   display: flex;
   align-items: center;
-  height: 34px;
-  padding: 0 10px;
+  height: 36px;
+  padding: 0 8px;
   background: var(--color-bg-elevated);
   border-bottom: 1px solid var(--color-border);
-  gap: 8px;
+  gap: 6px;
+  overflow-x: auto;
+  white-space: nowrap;
 }
 
 .menu-bar__brand {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding-right: 12px;
+  padding-right: 8px;
   border-right: 1px solid var(--color-border);
   cursor: default;
+  flex-shrink: 0;
 }
 .menu-bar__logo-icon {
   font-size: 16px;
@@ -144,12 +147,49 @@ body {
   font-weight: 700;
   letter-spacing: -0.3px;
   color: var(--color-text);
+  white-space: nowrap;
+}
+
+/* 상단 빠른 실행 아이콘 바 (Quick Access Toolbar) */
+.menu-bar__quick-access {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px 0 2px;
+  border-right: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.menu-bar__quick-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text);
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.menu-bar__quick-icon-btn:hover {
+  background: var(--color-bg-hover);
+  border-color: var(--color-border);
+}
+.menu-bar__quick-icon-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+  border-color: transparent;
 }
 
 .menu-bar__tabs {
   display: flex;
   align-items: center;
   gap: 2px;
+  flex-shrink: 0;
 }
 
 .menu-tab-btn {
@@ -163,6 +203,7 @@ body {
   cursor: pointer;
   transition: all 0.12s ease;
   position: relative;
+  white-space: nowrap;
 }
 .menu-tab-btn:hover {
   background: var(--color-bg-hover);
@@ -177,12 +218,73 @@ body {
 
 .menu-bar__spacer {
   flex: 1;
+  min-width: 8px;
 }
 
 .menu-bar__right {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+/* 상단 우측 페이지 이동 & 배율 그룹 */
+.menu-bar__nav-group,
+.menu-bar__zoom-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 1px 3px;
+}
+
+.menu-bar__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.menu-bar__icon-btn:hover {
+  background: var(--color-bg-hover);
+}
+.menu-bar__icon-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.menu-bar__page-info {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  padding: 0 4px;
+  min-width: 44px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.menu-bar__zoom-btn {
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 0 4px;
+  cursor: pointer;
+  min-width: 40px;
+  text-align: center;
+}
+.menu-bar__zoom-btn:hover {
+  color: var(--color-accent);
 }
 
 .menu-bar__quick-btn {
@@ -197,6 +299,7 @@ body {
   font-size: 11px;
   cursor: pointer;
   transition: all 0.12s;
+  white-space: nowrap;
 }
 .menu-bar__quick-btn:hover {
   background: var(--color-bg-hover);
@@ -211,7 +314,7 @@ body {
 .menu-bar__doc-title {
   font-size: 11px;
   color: var(--color-text-muted);
-  max-width: 220px;
+  max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -221,10 +324,16 @@ body {
   border: 1px solid var(--color-border);
 }
 
+.menu-bar__ribbon-toggle {
+  font-size: 10px;
+  padding: 3px 6px;
+  font-weight: bold;
+}
+
 /* 2. 플라이아웃 리본 드로어 (Flyout Ribbon Drawer) */
 .ribbon-flyout {
   position: absolute;
-  top: 34px;
+  top: 36px;
   left: 0;
   right: 0;
   z-index: 500;

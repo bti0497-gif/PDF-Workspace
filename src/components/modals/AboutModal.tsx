@@ -72,7 +72,7 @@ export function AboutModal({ onClose }: Props) {
           </div>
           <h2 style={{ marginBottom: 4 }}>더존 PDF 편집기</h2>
           <p style={{ color: 'var(--color-text-muted)', marginBottom: 18 }}>
-            버전 1.0.0
+            버전 1.0.1
           </p>
           <div
             style={{
