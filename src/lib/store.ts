@@ -9,10 +9,11 @@
  */
 import { create } from 'zustand'
 import type { Annotation, AnnotationType } from '../../electron/shared/types'
-import type { VirtualPage } from '../core/domain/page'
+import type { VirtualPage, WatermarkConfig, PageNumberConfig } from '../core/domain/page'
 import {
   createInitialVirtualPages,
   reorderVirtualPages,
+  reorderMultipleVirtualPages,
   rotateVirtualPages,
   deleteVirtualPages,
   duplicateVirtualPages,
@@ -20,7 +21,9 @@ import {
   normalizeVirtualPages,
   cropVirtualPages,
   replaceTextOnVirtualPage,
-  removeTextReplacementOnVirtualPage
+  removeTextReplacementOnVirtualPage,
+  applyWatermarkToVirtualPages,
+  applyPageNumberToVirtualPages
 } from '../core/domain/page'
 import type {
   NormalizedPageConfig,
@@ -29,7 +32,7 @@ import type {
 } from '../core/domain/page'
 import type { SourceDocument } from '../core/domain/document'
 import { ROOT_DOC_ID } from '../core/domain/document'
-import type { BookmarkNode } from '../core/domain/bookmark'
+import { generateBookmarkId, type BookmarkNode } from '../core/domain/bookmark'
 
 /** 하위 호환성을 위한 현재 로드된 문서 메타 정보 */
 export interface DocumentMeta {
@@ -42,8 +45,17 @@ export interface DocumentMeta {
 
 export type ToolType = 'select' | AnnotationType | 'text-edit'
 export type ThemeMode = 'light' | 'dark'
-export type ViewMode = 'single' | 'continuous'
-export type SidebarTab = 'thumbnails' | 'bookmarks'
+export type ViewMode = 'single' | 'continuous' | 'two-page'
+export type SidebarTab = 'thumbnails' | 'bookmarks' | 'annotations'
+
+/** 문서 메타데이터 (PDF Info) */
+export interface DocumentMetadata {
+  title?: string
+  author?: string
+  subject?: string
+  keywords?: string
+  creator?: string
+}
 
 /** 검색 매칭 항목 정보 */
 export interface SearchMatch {
@@ -67,6 +79,25 @@ interface HistoryState {
   future: VirtualPage[][]
 }
 
+// ── 로컬 스토리지 환경설정 안전 헬퍼 ──
+function loadPreference<T>(key: string, defaultValue: T): T {
+  try {
+    const val = localStorage.getItem(key)
+    if (val === null) return defaultValue
+    return JSON.parse(val) as T
+  } catch {
+    return defaultValue
+  }
+}
+
+function savePreference<T>(key: string, value: T): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    /* localStorage 접근 제한 환경 안전 폴백 */
+  }
+}
+
 interface AppState {
   // ── 문서 & 가상 매니페스트 ──
   document: DocumentMeta | null
@@ -76,13 +107,17 @@ interface AppState {
   isLoading: boolean
   loadingProgress: LoadingProgress | null
 
-  // ── 사이드바 & 목차 ──
+  // ── 사이드바 & 목차 & UI 설정 ──
   sidebarTab: SidebarTab
   bookmarks: BookmarkNode[]
+  thumbnailSize: number
+  sidebarWidth: number
+  selectionColor: string
 
   // ── 보기 & 선택 ──
   currentPage: number
   selectedPageIndices: number[]
+  selectionAnchorIndex: number | null
   viewMode: ViewMode
   zoom: number
   thumbnailsVisible: boolean
@@ -91,6 +126,9 @@ interface AppState {
   // ── 도구 ──
   activeTool: ToolType
   toolColor: string
+  toolStrokeWidth: number
+  toolOpacity: number
+  toolFontSize: number
 
   // ── 주석 ──
   annotations: Annotation[]
@@ -106,19 +144,29 @@ interface AppState {
   // ── 히스토리 ──
   history: HistoryState
 
+  // ── 문서 메타데이터 (속성) ──
+  metadata?: DocumentMetadata
+
   // ── 액션 ──
+  setDocumentMetadata: (meta: DocumentMetadata) => void
   setDocument: (doc: DocumentMeta | null, dimensions?: { width: number; height: number }) => void
   setDirty: (dirty: boolean) => void
   setLoading: (loading: boolean) => void
   setLoadingProgress: (progress: LoadingProgress | null) => void
   setSidebarTab: (tab: SidebarTab) => void
   setBookmarks: (bookmarks: BookmarkNode[]) => void
+  addBookmark: (title: string, pageIndex: number) => void
+  removeBookmark: (id: string) => void
+  setThumbnailSize: (size: number) => void
+  setSidebarWidth: (width: number) => void
+  setSelectionColor: (color: string) => void
 
   setCurrentPage: (page: number) => void
   setViewMode: (mode: ViewMode) => void
   selectPage: (index: number, mode?: 'single' | 'toggle' | 'range') => void
   selectAllPages: () => void
   clearPageSelection: () => void
+  selectPagesByPredicate: (mode: 'all' | 'none' | 'even' | 'odd' | 'invert' | number[]) => void
 
   setZoom: (zoom: number) => void
   zoomIn: () => void
@@ -130,6 +178,9 @@ interface AppState {
 
   setActiveTool: (tool: ToolType) => void
   setToolColor: (color: string) => void
+  setToolStrokeWidth: (w: number) => void
+  setToolOpacity: (o: number) => void
+  setToolFontSize: (s: number) => void
 
   addAnnotation: (ann: Annotation) => void
   updateAnnotation: (id: string, patch: Partial<Annotation>) => void
@@ -153,17 +204,39 @@ interface AppState {
 
   // ── 가상 페이지 조작 (비파괴, 0ms) ──
   reorderPages: (fromIndex: number, toIndex: number) => void
-  rotatePages: (indices: number[], direction: 'left' | 'right') => void
+  reorderMultiplePages: (fromIndices: number[], targetIndex: number) => void
+  rotatePages: (indices: number[], direction: 'left' | 'right' | '180') => void
   deletePages: (indices: number[]) => void
   duplicatePages: (indices: number[]) => void
   normalizePages: (indices: number[], config: NormalizedPageConfig) => void
   cropPages: (indices: number[], margins: CropMargins) => void
+  applyWatermark: (indices: number[], config: WatermarkConfig | undefined) => void
+  applyPageNumbering: (
+    indices: number[],
+    options: {
+      format: 'number' | 'dash' | 'slash' | 'pageOf'
+      startNumber: number
+      position: PageNumberConfig['position']
+      fontSize: number
+      color: string
+      margin: number
+    } | null
+  ) => void
   insertPagesFromDocument: (
     sourceId: string,
     fileName: string,
     bytes: Uint8Array,
     pageCount: number,
-    insertIndex: number
+    insertIndex: number,
+    dimensions?: { width: number; height: number }
+  ) => void
+  insertPdfPagesAt: (
+    sourceId: string,
+    fileName: string,
+    bytes: Uint8Array,
+    pageCount: number,
+    insertIndex: number,
+    dimensions?: { width: number; height: number }
   ) => void
 
   undo: () => void
@@ -183,9 +256,13 @@ export const useStore = create<AppState>((set, get) => ({
 
   sidebarTab: 'thumbnails',
   bookmarks: [],
+  thumbnailSize: Math.max(96, Math.min(260, Number(loadPreference('douzone_pdf_thumb_size', 156)) || 156)),
+  sidebarWidth: Math.max(170, Math.min(640, Number(loadPreference('douzone_pdf_sidebar_width', 220)) || 220)),
+  selectionColor: loadPreference('douzone_pdf_selection_color', '#10b981') || '#10b981',
 
   currentPage: 0,
   selectedPageIndices: [0],
+  selectionAnchorIndex: 0,
   viewMode: 'single',
   zoom: 1,
   thumbnailsVisible: true,
@@ -193,6 +270,9 @@ export const useStore = create<AppState>((set, get) => ({
 
   activeTool: 'select',
   toolColor: '#ffeb3b',
+  toolStrokeWidth: 2,
+  toolOpacity: 1,
+  toolFontSize: 14,
 
   annotations: [],
   selectedAnnotationId: null,
@@ -204,6 +284,9 @@ export const useStore = create<AppState>((set, get) => ({
   searchBarVisible: false,
 
   history: { past: [], future: [] },
+  metadata: undefined,
+
+  setDocumentMetadata: (meta) => set({ metadata: meta, isDirty: true }),
 
   setDocument: (doc, dimensions) => {
     if (!doc) {
@@ -214,10 +297,12 @@ export const useStore = create<AppState>((set, get) => ({
         bookmarks: [],
         currentPage: 0,
         selectedPageIndices: [],
+        selectionAnchorIndex: null,
         annotations: [],
         selectedAnnotationId: null,
         isDirty: false,
-        history: { past: [], future: [] }
+        history: { past: [], future: [] },
+        metadata: undefined
       })
       return
     }
@@ -238,10 +323,12 @@ export const useStore = create<AppState>((set, get) => ({
       sources,
       currentPage: 0,
       selectedPageIndices: [0],
+      selectionAnchorIndex: 0,
       zoom: 1,
       annotations: [],
       selectedAnnotationId: null,
       isDirty: false,
+      metadata: undefined,
       history: { past: [], future: [] }
     })
   },
@@ -251,6 +338,46 @@ export const useStore = create<AppState>((set, get) => ({
   setLoadingProgress: (progress) => set({ loadingProgress: progress }),
   setSidebarTab: (tab) => set({ sidebarTab: tab }),
   setBookmarks: (bookmarks) => set({ bookmarks }),
+  addBookmark: (title: string, pageIndex: number) => {
+    const newBm: BookmarkNode = {
+      id: generateBookmarkId(),
+      title: title.trim() || `${pageIndex + 1} 페이지 책갈피`,
+      targetPageIndex: pageIndex,
+      children: []
+    }
+    set((state) => ({
+      bookmarks: [...state.bookmarks, newBm],
+      isDirty: true
+    }))
+  },
+  removeBookmark: (id: string) => {
+    const filterTree = (nodes: BookmarkNode[]): BookmarkNode[] => {
+      return nodes
+        .filter((n) => n.id !== id)
+        .map((n) => ({
+          ...n,
+          children: n.children ? filterTree(n.children) : []
+        }))
+    }
+    set((state) => ({
+      bookmarks: filterTree(state.bookmarks),
+      isDirty: true
+    }))
+  },
+  setThumbnailSize: (size) => {
+    const clamped = Math.max(96, Math.min(260, Math.round(size)))
+    savePreference('douzone_pdf_thumb_size', clamped)
+    set({ thumbnailSize: clamped })
+  },
+  setSidebarWidth: (width) => {
+    const clamped = Math.max(170, Math.min(640, Math.round(width)))
+    savePreference('douzone_pdf_sidebar_width', clamped)
+    set({ sidebarWidth: clamped })
+  },
+  setSelectionColor: (color) => {
+    savePreference('douzone_pdf_selection_color', color)
+    set({ selectionColor: color })
+  },
 
   setCurrentPage: (page) => {
     const { pages } = get()
@@ -261,43 +388,107 @@ export const useStore = create<AppState>((set, get) => ({
   setViewMode: (mode) => set({ viewMode: mode }),
 
   selectPage: (index, mode = 'single') => {
-    const { selectedPageIndices, pages } = get()
+    const { selectedPageIndices, pages, selectionAnchorIndex, currentPage } = get()
     if (index < 0 || index >= pages.length) return
 
     let nextSelected: number[]
+    let nextAnchor: number | null = selectionAnchorIndex
+
     if (mode === 'single') {
       nextSelected = [index]
+      nextAnchor = index
+      set({
+        selectedPageIndices: nextSelected,
+        selectionAnchorIndex: nextAnchor,
+        currentPage: index
+      })
     } else if (mode === 'toggle') {
       if (selectedPageIndices.includes(index)) {
         nextSelected = selectedPageIndices.filter((i) => i !== index)
-        if (nextSelected.length === 0) nextSelected = [index] // 최소 1개 유지
       } else {
-        nextSelected = [...selectedPageIndices, index]
+        nextSelected = [...selectedPageIndices, index].sort((a, b) => a - b)
       }
+      nextAnchor = index
+      const nextCurrent =
+        nextSelected.length > 0
+          ? nextSelected.includes(currentPage)
+            ? currentPage
+            : nextSelected[nextSelected.length - 1]
+          : index
+      set({
+        selectedPageIndices: nextSelected,
+        selectionAnchorIndex: nextAnchor,
+        currentPage: nextCurrent
+      })
     } else {
-      // range (Shift+클릭)
-      const lastIndex = selectedPageIndices[selectedPageIndices.length - 1] ?? 0
-      const start = Math.min(lastIndex, index)
-      const end = Math.max(lastIndex, index)
-      const range: number[] = []
-      for (let i = start; i <= end; i++) range.push(i)
-      nextSelected = Array.from(new Set([...selectedPageIndices, ...range]))
+      // range (Shift+클릭) - anchor 기준 대체 범위 선택
+      const anchor = selectionAnchorIndex ?? selectedPageIndices[0] ?? currentPage
+      const start = Math.min(anchor, index)
+      const end = Math.max(anchor, index)
+      nextSelected = []
+      for (let i = start; i <= end; i++) {
+        nextSelected.push(i)
+      }
+      set({
+        selectedPageIndices: nextSelected,
+        selectionAnchorIndex: anchor,
+        currentPage: index
+      })
     }
-
-    set({
-      selectedPageIndices: nextSelected,
-      currentPage: index
-    })
   },
 
   selectAllPages: () => {
     const { pages } = get()
-    set({ selectedPageIndices: pages.map((_, i) => i) })
+    set({
+      selectedPageIndices: pages.map((_, i) => i),
+      selectionAnchorIndex: 0
+    })
   },
 
   clearPageSelection: () => {
     const { currentPage } = get()
-    set({ selectedPageIndices: [currentPage] })
+    set({
+      selectedPageIndices: [currentPage],
+      selectionAnchorIndex: currentPage
+    })
+  },
+
+  selectPagesByPredicate: (mode) => {
+    const { pages, selectedPageIndices, currentPage } = get()
+    if (pages.length === 0) return
+
+    let nextSelected: number[]
+    if (mode === 'all') {
+      nextSelected = pages.map((_, i) => i)
+    } else if (mode === 'none') {
+      nextSelected = []
+    } else if (mode === 'even') {
+      // 짝수 페이지 번호 (2, 4, 6... -> 0-based 인덱스 1, 3, 5...)
+      nextSelected = pages.map((_, i) => i).filter((idx) => (idx + 1) % 2 === 0)
+    } else if (mode === 'odd') {
+      // 홀수 페이지 번호 (1, 3, 5... -> 0-based 인덱스 0, 2, 4...)
+      nextSelected = pages.map((_, i) => i).filter((idx) => (idx + 1) % 2 === 1)
+    } else if (mode === 'invert') {
+      const setIdx = new Set(selectedPageIndices)
+      nextSelected = pages.map((_, i) => i).filter((idx) => !setIdx.has(idx))
+    } else if (Array.isArray(mode)) {
+      const valid = new Set(mode.filter((i) => i >= 0 && i < pages.length))
+      nextSelected = Array.from(valid).sort((a, b) => a - b)
+    } else {
+      return
+    }
+
+    const anchor = nextSelected.length > 0 ? nextSelected[0] : null
+    let nextCurrent = currentPage
+    if (nextSelected.length > 0 && !nextSelected.includes(currentPage)) {
+      nextCurrent = nextSelected[0]
+    }
+
+    set({
+      selectedPageIndices: nextSelected,
+      selectionAnchorIndex: anchor,
+      currentPage: nextCurrent
+    })
   },
 
   setZoom: (zoom) => set({ zoom: Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom)) }),
@@ -309,7 +500,37 @@ export const useStore = create<AppState>((set, get) => ({
   toggleTheme: () => set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
 
   setActiveTool: (tool) => set({ activeTool: tool, selectedAnnotationId: null }),
-  setToolColor: (color) => set({ toolColor: color }),
+  setToolColor: (color) => {
+    const { selectedAnnotationId, updateAnnotation } = get()
+    set({ toolColor: color })
+    if (selectedAnnotationId) {
+      updateAnnotation(selectedAnnotationId, { color })
+    }
+  },
+  setToolStrokeWidth: (w) => {
+    const strokeWidth = Math.max(1, Math.min(24, w))
+    const { selectedAnnotationId, updateAnnotation } = get()
+    set({ toolStrokeWidth: strokeWidth })
+    if (selectedAnnotationId) {
+      updateAnnotation(selectedAnnotationId, { strokeWidth })
+    }
+  },
+  setToolOpacity: (o) => {
+    const opacity = Math.max(0.05, Math.min(1, o))
+    const { selectedAnnotationId, updateAnnotation } = get()
+    set({ toolOpacity: opacity })
+    if (selectedAnnotationId) {
+      updateAnnotation(selectedAnnotationId, { opacity })
+    }
+  },
+  setToolFontSize: (s) => {
+    const fontSize = Math.max(8, Math.min(72, s))
+    const { selectedAnnotationId, updateAnnotation } = get()
+    set({ toolFontSize: fontSize })
+    if (selectedAnnotationId) {
+      updateAnnotation(selectedAnnotationId, { fontSize })
+    }
+  },
 
   addAnnotation: (ann) =>
     set((s) => ({
@@ -388,23 +609,84 @@ export const useStore = create<AppState>((set, get) => ({
 
   // ── 가상 페이지 조작 (비파괴, 0ms) ──
   reorderPages: (fromIndex, toIndex) => {
-    const { pages, document, history, currentPage } = get()
+    const { selectedPageIndices } = get()
+    if (selectedPageIndices.includes(fromIndex) && selectedPageIndices.length > 1) {
+      get().reorderMultiplePages(selectedPageIndices, toIndex)
+      return
+    }
+
+    const { pages, document, history, currentPage, annotations } = get()
     if (fromIndex === toIndex || !document) return
 
     const nextPages = reorderVirtualPages(pages, fromIndex, toIndex)
-    let nextCurrent = currentPage
-    if (currentPage === fromIndex) {
-      nextCurrent = toIndex
-    } else if (fromIndex < currentPage && toIndex >= currentPage) {
-      nextCurrent = currentPage - 1
-    } else if (fromIndex > currentPage && toIndex <= currentPage) {
-      nextCurrent = currentPage + 1
+    if (nextPages === pages) return
+
+    const oldToNew = new Map<number, number>()
+    for (let oldIdx = 0; oldIdx < pages.length; oldIdx++) {
+      const oldId = pages[oldIdx].id
+      const newIdx = nextPages.findIndex((p) => p.id === oldId)
+      if (newIdx !== -1) oldToNew.set(oldIdx, newIdx)
     }
+
+    const nextAnnotations = annotations.map((ann) => ({
+      ...ann,
+      pageIndex: oldToNew.get(ann.pageIndex) ?? ann.pageIndex
+    }))
+
+    const nextCurrent = oldToNew.get(currentPage) ?? toIndex
 
     set({
       pages: nextPages,
       currentPage: nextCurrent,
       selectedPageIndices: [nextCurrent],
+      selectionAnchorIndex: nextCurrent,
+      annotations: nextAnnotations,
+      document: {
+        ...document,
+        rotations: nextPages.map((p) => p.rotation)
+      },
+      isDirty: true,
+      history: {
+        past: [...history.past, pages],
+        future: []
+      }
+    })
+  },
+
+  reorderMultiplePages: (fromIndices, targetIndex) => {
+    const { pages, document, history, currentPage, annotations } = get()
+    if (fromIndices.length === 0 || !document) return
+
+    const { pages: nextPages, newSelectedIndices } = reorderMultipleVirtualPages(
+      pages,
+      fromIndices,
+      targetIndex
+    )
+    if (nextPages === pages) return
+
+    const oldToNew = new Map<number, number>()
+    for (let oldIdx = 0; oldIdx < pages.length; oldIdx++) {
+      const oldId = pages[oldIdx].id
+      const newIdx = nextPages.findIndex((p) => p.id === oldId)
+      if (newIdx !== -1) oldToNew.set(oldIdx, newIdx)
+    }
+
+    const nextAnnotations = annotations.map((ann) => ({
+      ...ann,
+      pageIndex: oldToNew.get(ann.pageIndex) ?? ann.pageIndex
+    }))
+
+    const nextCurrent =
+      newSelectedIndices.length > 0
+        ? newSelectedIndices[0]
+        : (oldToNew.get(currentPage) ?? currentPage)
+
+    set({
+      pages: nextPages,
+      currentPage: nextCurrent,
+      selectedPageIndices: newSelectedIndices,
+      selectionAnchorIndex: nextCurrent,
+      annotations: nextAnnotations,
       document: {
         ...document,
         rotations: nextPages.map((p) => p.rotation)
@@ -437,16 +719,31 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   deletePages: (indices) => {
-    const { pages, document, history, currentPage } = get()
-    if (!document || pages.length <= indices.length) return // 전체 삭제 방지
+    const { pages, document, history, currentPage, annotations } = get()
+    if (!document || pages.length <= indices.length || indices.length === 0) return // 전체 삭제 방지
 
+    const indexSet = new Set(indices)
     const nextPages = deleteVirtualPages(pages, indices)
-    const nextCurrent = Math.min(currentPage, nextPages.length - 1)
+    const nextCurrent = Math.max(0, Math.min(currentPage, nextPages.length - 1))
+
+    // 주석 정리: 삭제된 페이지 주석 제거 및 인덱스 시프트
+    const sortedIndices = [...indexSet].sort((a, b) => a - b)
+    const nextAnnotations = annotations
+      .filter((ann) => !indexSet.has(ann.pageIndex))
+      .map((ann) => {
+        const deletedBefore = sortedIndices.filter((i) => i < ann.pageIndex).length
+        return {
+          ...ann,
+          pageIndex: ann.pageIndex - deletedBefore
+        }
+      })
 
     set({
       pages: nextPages,
       currentPage: nextCurrent,
       selectedPageIndices: [nextCurrent],
+      selectionAnchorIndex: nextCurrent,
+      annotations: nextAnnotations,
       document: {
         ...document,
         pageCount: nextPages.length,
@@ -510,6 +807,64 @@ export const useStore = create<AppState>((set, get) => ({
     })
   },
 
+  applyWatermark: (indices, config) => {
+    const { pages, history, document } = get()
+    if (!document || indices.length === 0) return
+
+    const nextPages = applyWatermarkToVirtualPages(pages, indices, config)
+    set({
+      pages: nextPages,
+      isDirty: true,
+      history: {
+        past: [...history.past, pages],
+        future: []
+      }
+    })
+  },
+
+  applyPageNumbering: (indices, options) => {
+    const { pages, history, document } = get()
+    if (!document || indices.length === 0) return
+
+    let nextPages: VirtualPage[]
+    if (!options) {
+      nextPages = applyPageNumberToVirtualPages(pages, indices, () => undefined)
+    } else {
+      nextPages = applyPageNumberToVirtualPages(
+        pages,
+        indices,
+        (pageOrderIdx, totalSelected) => {
+          const currentNum = options.startNumber + pageOrderIdx
+          let text = `${currentNum}`
+          if (options.format === 'dash') {
+            text = `- ${currentNum} -`
+          } else if (options.format === 'slash') {
+            text = `${currentNum} / ${options.startNumber + totalSelected - 1}`
+          } else if (options.format === 'pageOf') {
+            text = `Page ${currentNum} of ${options.startNumber + totalSelected - 1}`
+          }
+
+          return {
+            text,
+            position: options.position,
+            fontSize: options.fontSize,
+            color: options.color,
+            margin: options.margin
+          }
+        }
+      )
+    }
+
+    set({
+      pages: nextPages,
+      isDirty: true,
+      history: {
+        past: [...history.past, pages],
+        future: []
+      }
+    })
+  },
+
   addTextReplacement: (replacement) => {
     const { pages, history, document } = get()
     if (!document) return
@@ -548,8 +903,8 @@ export const useStore = create<AppState>((set, get) => ({
     })
   },
 
-  insertPagesFromDocument: (sourceId, fileName, bytes, pageCount, insertIndex) => {
-    const { pages, sources, document, history } = get()
+  insertPagesFromDocument: (sourceId, fileName, bytes, pageCount, insertIndex, dimensions) => {
+    const { pages, sources, document, history, annotations } = get()
     if (!document) return
 
     const nextSources = new Map(sources)
@@ -561,12 +916,27 @@ export const useStore = create<AppState>((set, get) => ({
       pageCount
     })
 
-    const newPages = createInitialVirtualPages(sourceId, pageCount)
-    const nextPages = insertVirtualPagesAt(pages, newPages, insertIndex)
+    const safeIndex = Math.max(0, Math.min(pages.length, insertIndex))
+    const newPages = createInitialVirtualPages(sourceId, pageCount, undefined, dimensions)
+    const nextPages = insertVirtualPagesAt(pages, newPages, safeIndex)
+
+    // 새로 삽입된 페이지들을 선택 상태로 지정
+    const insertedIndices = Array.from({ length: pageCount }, (_, i) => safeIndex + i)
+
+    // 기존 주석의 pageIndex 재매핑 (삽입 위치 이상인 경우 pageCount 만큼 뒤로 시프트)
+    const nextAnnotations = annotations.map((ann) =>
+      ann.pageIndex >= safeIndex
+        ? { ...ann, pageIndex: ann.pageIndex + pageCount }
+        : ann
+    )
 
     set({
       sources: nextSources,
       pages: nextPages,
+      currentPage: safeIndex,
+      selectedPageIndices: insertedIndices,
+      selectionAnchorIndex: safeIndex,
+      annotations: nextAnnotations,
       document: {
         ...document,
         pageCount: nextPages.length,
@@ -579,6 +949,9 @@ export const useStore = create<AppState>((set, get) => ({
       }
     })
   },
+
+  insertPdfPagesAt: (sourceId, fileName, bytes, pageCount, insertIndex, dimensions) =>
+    get().insertPagesFromDocument(sourceId, fileName, bytes, pageCount, insertIndex, dimensions),
 
   undo: () => {
     const { history, pages, document } = get()

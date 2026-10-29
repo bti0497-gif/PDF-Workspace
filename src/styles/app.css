@@ -561,18 +561,18 @@ body {
    사이드바 (왼쪽 썸네일 & 북마크)
    ============================================================ */
 .sidebar {
-  width: var(--thumbnail-width);
+  width: var(--sidebar-width, 220px);
   background: var(--color-bg-panel);
   border-right: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  transition: width 0.18s ease;
   overflow: hidden;
   position: relative;
+  user-select: none;
 }
 .sidebar--hidden {
-  width: 0;
+  width: 0 !important;
   border-right: none;
 }
 
@@ -603,12 +603,124 @@ body {
   border-bottom-color: var(--color-accent);
 }
 
+/* 썸네일 컨트롤 헤더 바 */
+.thumbnail-controls {
+  padding: 6px 8px;
+  background: var(--color-bg-elevated);
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+.thumbnail-controls__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+.thumbnail-controls__group {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.thumbnail-controls__btn {
+  padding: 2px 5px;
+  font-size: 10.5px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  white-space: nowrap;
+}
+.thumbnail-controls__btn:hover {
+  background: var(--color-bg-panel);
+  border-color: var(--color-text-muted);
+}
+.thumbnail-controls__btn--active {
+  background: var(--color-accent);
+  color: #fff;
+  border-color: var(--color-accent);
+}
+.thumbnail-controls__slider {
+  width: 60px;
+  height: 4px;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+}
+.thumbnail-controls__badge {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.thumbnail-controls__swatches {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.thumbnail-controls__swatch {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  transition: transform 0.12s, border-color 0.12s;
+  padding: 0;
+}
+.thumbnail-controls__swatch:hover {
+  transform: scale(1.2);
+}
+.thumbnail-controls__swatch--active {
+  border-color: #fff;
+  box-shadow: 0 0 0 1px #000;
+  transform: scale(1.15);
+}
+.thumbnail-controls__color-input {
+  width: 14px;
+  height: 14px;
+  border: none;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+/* 사이드바 우측 너비 조절 리사이저 */
+.thumbnail-panel__resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 5px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 50;
+  transition: background 0.15s;
+}
+.thumbnail-panel__resizer:hover,
+.thumbnail-panel__resizer:active {
+  background: var(--color-accent);
+}
+
 .sidebar__content {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
   position: relative;
   padding: 10px;
+}
+
+.thumbnail-panel__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(calc(var(--thumb-size, 156px) + 16px), 1fr));
+  gap: 12px;
+  justify-items: center;
+  align-items: start;
+  min-height: 100%;
+  position: relative;
+  outline: none;
 }
 
 /* 드롭 인디케이터 (삽입선) - RAF & CSS transform 기반 */
@@ -626,9 +738,17 @@ body {
   transition: transform 0.05s ease-out;
 }
 
+/* 러버밴드 마키 박스 (드래그 영역 선택) */
+.thumbnail-marquee {
+  position: absolute;
+  background: rgba(16, 185, 129, 0.18);
+  border: 1px dashed var(--thumb-selected-color, #10b981);
+  pointer-events: none;
+  z-index: 90;
+}
+
 .thumbnail {
   position: relative;
-  margin-bottom: 10px;
   cursor: pointer;
   border: 2px solid transparent;
   border-radius: 4px;
@@ -636,22 +756,80 @@ body {
   background: #fff;
   transition: border-color 0.12s, opacity 0.15s, transform 0.12s;
   user-select: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 .thumbnail:hover {
   border-color: var(--color-text-muted);
 }
 .thumbnail--active {
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 1px var(--color-accent);
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
 }
 .thumbnail--selected {
-  border-color: var(--color-accent);
-  background: rgba(14, 111, 214, 0.1);
+  border-color: var(--thumb-selected-color, #10b981) !important;
+  box-shadow: 0 0 0 1px var(--thumb-selected-color, #10b981);
+}
+.thumbnail--selected::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--thumb-selected-color, #10b981);
+  opacity: 0.16;
+  pointer-events: none;
 }
 .thumbnail--dragging {
-  opacity: 0.35;
+  opacity: 0.45;
   transform: scale(0.96);
 }
+
+.thumbnail__checkbox {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1.5px solid rgba(0, 0, 0, 0.45);
+  background: rgba(255, 255, 255, 0.9);
+  color: #fff;
+  font-size: 11px;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, border-color 0.15s;
+}
+.thumbnail:hover .thumbnail__checkbox,
+.thumbnail--selected .thumbnail__checkbox {
+  opacity: 1;
+}
+.thumbnail__checkbox--checked {
+  background: var(--thumb-selected-color, #10b981) !important;
+  border-color: var(--thumb-selected-color, #10b981) !important;
+  opacity: 1 !important;
+}
+
+.thumbnail__drag-badge {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--color-accent);
+  color: #fff;
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  z-index: 25;
+}
+
 .thumbnail__canvas {
   display: block;
   width: 100%;
@@ -667,20 +845,47 @@ body {
   font-size: 11px;
   padding: 1px 6px;
   border-radius: 3px;
+  z-index: 5;
+}
+.thumbnail--active .thumbnail__label {
+  background: var(--color-accent);
+  font-weight: 600;
 }
 .thumbnail__rotation {
   position: absolute;
-  top: 4px;
-  left: 4px;
+  bottom: 24px;
+  right: 4px;
   background: rgba(0, 0, 0, 0.65);
   color: #ffd54f;
   font-size: 10px;
   padding: 1px 5px;
   border-radius: 3px;
   display: none;
+  z-index: 5;
 }
 .thumbnail__rotation--visible {
   display: block;
+}
+.thumbnail__badges {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  gap: 2px;
+  z-index: 5;
+}
+.thumbnail__badge {
+  background: rgba(0, 0, 0, 0.75);
+  color: #ffffff;
+  font-size: 10px;
+  line-height: 1.2;
+  padding: 1px 4px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(2px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 /* 북마크 (목차) 트리 */
@@ -1626,6 +1831,29 @@ body {
   font-variant-numeric: tabular-nums;
   margin-left: 12px;
 }
+
+/* ============================================================
+   텍스트 선택 플로팅 툴바 & 양면 보기
+   ============================================================ */
+@keyframes fadeInPopup {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+.text-selection-popup button:hover {
+  background-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+.viewer--two-page {
+  overflow: auto;
+}
+
 
 
 

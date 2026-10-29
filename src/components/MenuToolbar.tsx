@@ -8,13 +8,26 @@
 import { useState, useRef, useEffect } from 'react'
 import { useStore } from '../lib/store'
 import { usePdfDocument } from '../hooks/usePdfDocument'
-import { useMenuActions, extractSelectedPagesAction } from '../hooks/useMenuActions'
+import { useMenuActions, extractSelectedPagesAction, calculateFitZoom, insertBlankPageAt } from '../hooks/useMenuActions'
 import appIcon from '../assets/app-icon.png'
 import type { ToolType } from '../lib/store'
 
 interface Props {
   onOpenModal: (
-    modal: 'merge' | 'split' | 'about' | 'shortcuts' | 'normalize' | 'crop' | 'print'
+    modal:
+      | 'merge'
+      | 'split'
+      | 'about'
+      | 'shortcuts'
+      | 'normalize'
+      | 'crop'
+      | 'print'
+      | 'watermark'
+      | 'pageNumber'
+      | 'stamp'
+      | 'exportImage'
+      | 'ocr'
+      | 'metadata'
   ) => void
 }
 
@@ -34,7 +47,8 @@ const INTEGRATED_TOOLS: { id: ToolType; label: string; icon: string }[] = [
   { id: 'highlight', label: '형광펜', icon: '█' },
   { id: 'rectangle', label: '사각형', icon: '▭' },
   { id: 'textbox', label: '텍스트', icon: 'T' },
-  { id: 'drawing', label: '그리기', icon: '✎' }
+  { id: 'drawing', label: '그리기', icon: '✎' },
+  { id: 'redaction', label: '마스킹', icon: '⬛' }
 ]
 
 export function MenuToolbar({ onOpenModal }: Props) {
@@ -44,6 +58,9 @@ export function MenuToolbar({ onOpenModal }: Props) {
   const selectedPageIndices = useStore((s) => s.selectedPageIndices)
   const activeTool = useStore((s) => s.activeTool)
   const toolColor = useStore((s) => s.toolColor)
+  const toolStrokeWidth = useStore((s) => s.toolStrokeWidth)
+  const toolOpacity = useStore((s) => s.toolOpacity)
+  const toolFontSize = useStore((s) => s.toolFontSize)
   const zoom = useStore((s) => s.zoom)
   const thumbnailsVisible = useStore((s) => s.thumbnailsVisible)
   const isDirty = useStore((s) => s.isDirty)
@@ -56,6 +73,9 @@ export function MenuToolbar({ onOpenModal }: Props) {
   const setViewMode = useStore((s) => s.setViewMode)
   const setActiveTool = useStore((s) => s.setActiveTool)
   const setToolColor = useStore((s) => s.setToolColor)
+  const setToolStrokeWidth = useStore((s) => s.setToolStrokeWidth)
+  const setToolOpacity = useStore((s) => s.setToolOpacity)
+  const setToolFontSize = useStore((s) => s.setToolFontSize)
   const zoomIn = useStore((s) => s.zoomIn)
   const zoomOut = useStore((s) => s.zoomOut)
   const resetZoom = useStore((s) => s.resetZoom)
@@ -303,7 +323,20 @@ export function MenuToolbar({ onOpenModal }: Props) {
                     <button
                       className="ribbon-card"
                       title="문서 닫기"
-                      onClick={() => runAction(() => setDocument(null))}
+                      onClick={() =>
+                        runAction(() => {
+                          if (isDirty) {
+                            if (
+                              !window.confirm(
+                                '저장하지 않은 변경 사항이 있습니다. 저장하지 않고 문서를 닫으시겠습니까?'
+                              )
+                            ) {
+                              return
+                            }
+                          }
+                          setDocument(null)
+                        })
+                      }
                       disabled={!doc}
                     >
                       <span className="ribbon-card__icon">✕</span>
@@ -349,6 +382,16 @@ export function MenuToolbar({ onOpenModal }: Props) {
                       <span className="ribbon-card__label">PDF 분할</span>
                       <span className="ribbon-card__sub">파일 나누기</span>
                     </button>
+                    <button
+                      className="ribbon-card"
+                      title="PDF 페이지를 고화질 이미지(PNG/JPEG)로 내보내기"
+                      onClick={() => runAction(() => onOpenModal('exportImage'))}
+                      disabled={!doc}
+                    >
+                      <span className="ribbon-card__icon">🖼️</span>
+                      <span className="ribbon-card__label">이미지 내보내기</span>
+                      <span className="ribbon-card__sub">PNG / JPEG</span>
+                    </button>
                   </div>
                   <div className="ribbon-group__title">내보내기 및 분할/병합</div>
                 </div>
@@ -357,15 +400,25 @@ export function MenuToolbar({ onOpenModal }: Props) {
                   <div className="ribbon-group__content">
                     <button
                       className="ribbon-card"
+                      title="문서 속성 및 메타데이터 보기/편집"
+                      onClick={() => runAction(() => onOpenModal('metadata'))}
+                      disabled={!doc}
+                    >
+                      <span className="ribbon-card__icon">ℹ️</span>
+                      <span className="ribbon-card__label">문서 속성</span>
+                      <span className="ribbon-card__sub">메타데이터</span>
+                    </button>
+                    <button
+                      className="ribbon-card"
                       title="앱 정보"
                       onClick={() => runAction(() => onOpenModal('about'))}
                     >
-                      <span className="ribbon-card__icon">ℹ️</span>
+                      <span className="ribbon-card__icon">📄</span>
                       <span className="ribbon-card__label">프로그램 정보</span>
                       <span className="ribbon-card__sub">v1.0 Pro</span>
                     </button>
                   </div>
-                  <div className="ribbon-group__title">도움말</div>
+                  <div className="ribbon-group__title">문서 정보 및 도움말</div>
                 </div>
               </>
             )}
@@ -486,6 +539,36 @@ export function MenuToolbar({ onOpenModal }: Props) {
                       <span className="ribbon-card__label">텍스트</span>
                       <span className="ribbon-card__sub">글상자 입력</span>
                     </button>
+                    <button
+                      className="ribbon-card"
+                      title="결재 도장 · 전자서명 · 이미지 삽입"
+                      onClick={() => runAction(() => onOpenModal('stamp'))}
+                      disabled={!doc}
+                    >
+                      <span className="ribbon-card__icon">💮</span>
+                      <span className="ribbon-card__label">도장/서명</span>
+                      <span className="ribbon-card__sub">도장 · 서명</span>
+                    </button>
+                    <button
+                      className={`ribbon-card ${activeTool === 'redaction' ? 'ribbon-card--active' : ''}`}
+                      title="민감정보 영구 마스킹 (먹줄 가리기)"
+                      onClick={() => runAction(() => setActiveTool('redaction'))}
+                      disabled={!doc}
+                    >
+                      <span className="ribbon-card__icon">⬛</span>
+                      <span className="ribbon-card__label">먹줄 마스킹</span>
+                      <span className="ribbon-card__sub">개인정보 차단</span>
+                    </button>
+                    <button
+                      className="ribbon-card"
+                      title="AI / 광학 문자 인식 (OCR)"
+                      onClick={() => runAction(() => onOpenModal('ocr'))}
+                      disabled={!doc}
+                    >
+                      <span className="ribbon-card__icon">🔍</span>
+                      <span className="ribbon-card__label">OCR 문자인식</span>
+                      <span className="ribbon-card__sub">텍스트 추출</span>
+                    </button>
                   </div>
                   <div className="ribbon-group__title">빠른 마킹 도구</div>
                 </div>
@@ -526,8 +609,7 @@ export function MenuToolbar({ onOpenModal }: Props) {
                       title="선택 페이지 180° 상하 반전"
                       onClick={() =>
                         runAction(() => {
-                          rotatePages(targetIndices, 'right')
-                          rotatePages(targetIndices, 'right')
+                          rotatePages(targetIndices, '180')
                         })
                       }
                       disabled={!doc}
@@ -568,6 +650,18 @@ export function MenuToolbar({ onOpenModal }: Props) {
                     </button>
                     <button
                       className="ribbon-card"
+                      title="현재 페이지 뒤에 새 백지 페이지 삽입"
+                      onClick={() =>
+                        runAction(() => insertBlankPageAt(currentPage + 1))
+                      }
+                      disabled={!doc}
+                    >
+                      <span className="ribbon-card__icon">📄</span>
+                      <span className="ribbon-card__label">빈 페이지 추가</span>
+                      <span className="ribbon-card__sub">새 백지 삽입</span>
+                    </button>
+                    <button
+                      className="ribbon-card"
                       title="선택 페이지만 새 파일로 추출"
                       onClick={() =>
                         runAction(() => extractSelectedPagesAction(targetIndices))
@@ -603,6 +697,36 @@ export function MenuToolbar({ onOpenModal }: Props) {
                       <span className="ribbon-card__icon">✂</span>
                       <span className="ribbon-card__label">여백 자르기</span>
                       <span className="ribbon-card__sub">스캔 테두리 제거</span>
+                    </button>
+                    <button
+                      className="ribbon-card"
+                      title="대외비, 사본 등 텍스트 워터마크 삽입"
+                      onClick={() => runAction(() => onOpenModal('watermark'))}
+                      disabled={!doc}
+                    >
+                      <span className="ribbon-card__icon">💧</span>
+                      <span className="ribbon-card__label">워터마크</span>
+                      <span className="ribbon-card__sub">보안 표기</span>
+                    </button>
+                    <button
+                      className="ribbon-card"
+                      title="머리글/바닥글 페이지 번호 매기기"
+                      onClick={() => runAction(() => onOpenModal('pageNumber'))}
+                      disabled={!doc}
+                    >
+                      <span className="ribbon-card__icon">🔢</span>
+                      <span className="ribbon-card__label">페이지 번호</span>
+                      <span className="ribbon-card__sub">머리글/바닥글</span>
+                    </button>
+                    <button
+                      className="ribbon-card"
+                      title="스캔 문서 AI / 광학 문자 인식 (OCR)"
+                      onClick={() => runAction(() => onOpenModal('ocr'))}
+                      disabled={!doc}
+                    >
+                      <span className="ribbon-card__icon">🔍</span>
+                      <span className="ribbon-card__label">OCR 문자인식</span>
+                      <span className="ribbon-card__sub">텍스트 추출</span>
                     </button>
                   </div>
                   <div className="ribbon-group__title">규격 및 여백 조판</div>
@@ -697,6 +821,26 @@ export function MenuToolbar({ onOpenModal }: Props) {
                       <span className="ribbon-card__label">자유형 펜</span>
                       <span className="ribbon-card__sub">손글씨 그리기</span>
                     </button>
+                    <button
+                      className="ribbon-card"
+                      title="결재 도장 · 전자서명 · 이미지 삽입"
+                      onClick={() => runAction(() => onOpenModal('stamp'))}
+                      disabled={!doc}
+                    >
+                      <span className="ribbon-card__icon">💮</span>
+                      <span className="ribbon-card__label">도장/서명/이미지</span>
+                      <span className="ribbon-card__sub">도장 · 서명</span>
+                    </button>
+                    <button
+                      className={`ribbon-card ${activeTool === 'redaction' ? 'ribbon-card--active' : ''}`}
+                      title="민감정보 영구 마스킹 (먹줄 가리기)"
+                      onClick={() => runAction(() => setActiveTool('redaction'))}
+                      disabled={!doc}
+                    >
+                      <span className="ribbon-card__icon">⬛</span>
+                      <span className="ribbon-card__label">먹줄 마스킹</span>
+                      <span className="ribbon-card__sub">개인정보 차단</span>
+                    </button>
                   </div>
                   <div className="ribbon-group__title">마킹 및 도형 도구</div>
                 </div>
@@ -724,6 +868,57 @@ export function MenuToolbar({ onOpenModal }: Props) {
                     </div>
                   </div>
                   <div className="ribbon-group__title">색상 팔레트</div>
+                </div>
+
+                <div className="ribbon-group">
+                  <div
+                    className="ribbon-group__content"
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 4,
+                      justifyContent: 'center',
+                      minWidth: 145,
+                      padding: '4px 6px'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11 }}>
+                      <span>굵기: {toolStrokeWidth}px</span>
+                      <input
+                        type="range"
+                        min={1}
+                        max={16}
+                        value={toolStrokeWidth}
+                        onChange={(e) => setToolStrokeWidth(Number(e.target.value))}
+                        style={{ width: 75 }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11 }}>
+                      <span>투명: {Math.round(toolOpacity * 100)}%</span>
+                      <input
+                        type="range"
+                        min={10}
+                        max={100}
+                        step={5}
+                        value={Math.round(toolOpacity * 100)}
+                        onChange={(e) => setToolOpacity(Number(e.target.value) / 100)}
+                        style={{ width: 75 }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11 }}>
+                      <span>글자: {toolFontSize}pt</span>
+                      <input
+                        type="range"
+                        min={10}
+                        max={36}
+                        step={1}
+                        value={toolFontSize}
+                        onChange={(e) => setToolFontSize(Number(e.target.value))}
+                        style={{ width: 75 }}
+                      />
+                    </div>
+                  </div>
+                  <div className="ribbon-group__title">선/투명도/크기</div>
                 </div>
               </>
             )}
@@ -778,6 +973,36 @@ export function MenuToolbar({ onOpenModal }: Props) {
                       <span className="ribbon-card__label">여백 자르기</span>
                       <span className="ribbon-card__sub">상하좌우 크롭</span>
                     </button>
+                    <button
+                      className="ribbon-card"
+                      title="대외비, 사본 등 텍스트 워터마크 삽입"
+                      onClick={() => runAction(() => onOpenModal('watermark'))}
+                      disabled={!doc}
+                    >
+                      <span className="ribbon-card__icon">💧</span>
+                      <span className="ribbon-card__label">워터마크</span>
+                      <span className="ribbon-card__sub">보안 표기</span>
+                    </button>
+                    <button
+                      className="ribbon-card"
+                      title="머리글/바닥글 페이지 번호 매기기"
+                      onClick={() => runAction(() => onOpenModal('pageNumber'))}
+                      disabled={!doc}
+                    >
+                      <span className="ribbon-card__icon">🔢</span>
+                      <span className="ribbon-card__label">페이지 번호</span>
+                      <span className="ribbon-card__sub">머리글/바닥글</span>
+                    </button>
+                    <button
+                      className="ribbon-card"
+                      title="스캔 문서 AI / 광학 문자 인식 (OCR)"
+                      onClick={() => runAction(() => onOpenModal('ocr'))}
+                      disabled={!doc}
+                    >
+                      <span className="ribbon-card__icon">🔍</span>
+                      <span className="ribbon-card__label">OCR 문자인식</span>
+                      <span className="ribbon-card__sub">텍스트 추출</span>
+                    </button>
                   </div>
                   <div className="ribbon-group__title">출력 및 인쇄 조판</div>
                 </div>
@@ -821,13 +1046,33 @@ export function MenuToolbar({ onOpenModal }: Props) {
                     </button>
                     <button
                       className="ribbon-card"
-                      title="너비에 맞추기"
-                      onClick={() => runAction(() => setZoom(1.2))}
+                      title="페이지 너비에 맞추기"
+                      onClick={() =>
+                        runAction(() => {
+                          const z = calculateFitZoom('width')
+                          if (z) setZoom(z)
+                        })
+                      }
                       disabled={!doc}
                     >
                       <span className="ribbon-card__icon">↔</span>
                       <span className="ribbon-card__label">폭 맞춤</span>
                       <span className="ribbon-card__sub">가로 맞춤</span>
+                    </button>
+                    <button
+                      className="ribbon-card"
+                      title="페이지 전체를 화면에 맞추기"
+                      onClick={() =>
+                        runAction(() => {
+                          const z = calculateFitZoom('page')
+                          if (z) setZoom(z)
+                        })
+                      }
+                      disabled={!doc}
+                    >
+                      <span className="ribbon-card__icon">⊡</span>
+                      <span className="ribbon-card__label">페이지 맞춤</span>
+                      <span className="ribbon-card__sub">전체 맞춤</span>
                     </button>
                   </div>
                   <div className="ribbon-group__title">배율 조정</div>
@@ -854,6 +1099,16 @@ export function MenuToolbar({ onOpenModal }: Props) {
                       <span className="ribbon-card__icon">📜</span>
                       <span className="ribbon-card__label">연속 스크롤</span>
                       <span className="ribbon-card__sub">가상화 부드러운 스크롤</span>
+                    </button>
+                    <button
+                      className={`ribbon-card ${viewMode === 'two-page' ? 'ribbon-card--active' : ''}`}
+                      title="책처럼 양면(2페이지) 펼쳐 보기"
+                      onClick={() => runAction(() => setViewMode('two-page'))}
+                      disabled={!doc}
+                    >
+                      <span className="ribbon-card__icon">📖</span>
+                      <span className="ribbon-card__label">양면 보기</span>
+                      <span className="ribbon-card__sub">2쪽 펼침</span>
                     </button>
                     <button
                       className={`ribbon-card ${thumbnailsVisible ? 'ribbon-card--active' : ''}`}
@@ -1000,6 +1255,28 @@ export function MenuToolbar({ onOpenModal }: Props) {
           >
             ＋
           </button>
+          <button
+            className="toolbar__btn toolbar__btn--icon"
+            title="폭 맞춤"
+            onClick={() => {
+              const z = calculateFitZoom('width')
+              if (z) setZoom(z)
+            }}
+            disabled={!doc}
+          >
+            ↔
+          </button>
+          <button
+            className="toolbar__btn toolbar__btn--icon"
+            title="페이지 맞춤"
+            onClick={() => {
+              const z = calculateFitZoom('page')
+              if (z) setZoom(z)
+            }}
+            disabled={!doc}
+          >
+            ⊡
+          </button>
         </div>
 
         <div className="toolbar__divider" />
@@ -1024,6 +1301,89 @@ export function MenuToolbar({ onOpenModal }: Props) {
             onChange={(e) => setToolColor(e.target.value)}
             title="마킹/주석 색상"
           />
+          <div
+            className="toolbar__style-controls"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              fontSize: 11,
+              color: 'var(--color-text-muted)',
+              marginLeft: 2
+            }}
+          >
+            <label title={`선 굵기: ${toolStrokeWidth}px`} style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+              <span>굵기</span>
+              <select
+                value={toolStrokeWidth}
+                onChange={(e) => setToolStrokeWidth(Number(e.target.value))}
+                style={{
+                  background: 'var(--color-bg)',
+                  color: 'inherit',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: 3,
+                  padding: '1px 2px',
+                  fontSize: 11
+                }}
+              >
+                {[1, 2, 3, 4, 6, 8, 12].map((w) => (
+                  <option key={w} value={w}>
+                    {w}px
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label title={`투명도: ${Math.round(toolOpacity * 100)}%`} style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+              <span>투명</span>
+              <select
+                value={Math.round(toolOpacity * 100)}
+                onChange={(e) => setToolOpacity(Number(e.target.value) / 100)}
+                style={{
+                  background: 'var(--color-bg)',
+                  color: 'inherit',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: 3,
+                  padding: '1px 2px',
+                  fontSize: 11
+                }}
+              >
+                {[20, 35, 50, 75, 100].map((op) => (
+                  <option key={op} value={op}>
+                    {op}%
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label title={`글자 크기: ${toolFontSize}pt`} style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+              <span>글자</span>
+              <select
+                value={toolFontSize}
+                onChange={(e) => setToolFontSize(Number(e.target.value))}
+                style={{
+                  background: 'var(--color-bg)',
+                  color: 'inherit',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: 3,
+                  padding: '1px 2px',
+                  fontSize: 11
+                }}
+              >
+                {[10, 12, 14, 16, 18, 24, 32].map((s) => (
+                  <option key={s} value={s}>
+                    {s}pt
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <button
+            className="toolbar__btn"
+            title="도장 · 전자서명 · 이미지 삽입"
+            onClick={() => onOpenModal('stamp')}
+            disabled={!doc}
+          >
+            💮 도장/서명
+          </button>
         </div>
 
         <div className="toolbar__divider" />
@@ -1031,18 +1391,28 @@ export function MenuToolbar({ onOpenModal }: Props) {
         {/* 보기 및 빠른 조판 작업 */}
         <div className="toolbar__group">
           <button
-            className={`toolbar__btn ${viewMode === 'continuous' ? 'toolbar__btn--active' : ''}`}
-            title={
-              viewMode === 'single'
-                ? '연속 세로 스크롤로 전환'
-                : '단일 페이지 보기로 전환'
-            }
-            onClick={() =>
-              setViewMode(viewMode === 'single' ? 'continuous' : 'single')
-            }
+            className={`toolbar__btn ${viewMode === 'single' ? 'toolbar__btn--active' : ''}`}
+            title="단일 페이지 보기"
+            onClick={() => setViewMode('single')}
             disabled={!doc}
           >
-            {viewMode === 'single' ? '📄 단일' : '📜 연속'}
+            📄 단일
+          </button>
+          <button
+            className={`toolbar__btn ${viewMode === 'continuous' ? 'toolbar__btn--active' : ''}`}
+            title="연속 스크롤 보기"
+            onClick={() => setViewMode('continuous')}
+            disabled={!doc}
+          >
+            📜 연속
+          </button>
+          <button
+            className={`toolbar__btn ${viewMode === 'two-page' ? 'toolbar__btn--active' : ''}`}
+            title="양면(2페이지) 펼쳐 보기"
+            onClick={() => setViewMode('two-page')}
+            disabled={!doc}
+          >
+            📖 양면
           </button>
           <button
             className={`toolbar__btn ${thumbnailsVisible ? 'toolbar__btn--active' : ''}`}
@@ -1050,6 +1420,14 @@ export function MenuToolbar({ onOpenModal }: Props) {
             onClick={toggleThumbnails}
           >
             ▥ 패널
+          </button>
+          <button
+            className="toolbar__btn"
+            title="현재 위치 뒤에 빈 백지 페이지 추가"
+            onClick={() => void insertBlankPageAt(currentPage + 1)}
+            disabled={!doc}
+          >
+            📄 빈 페이지
           </button>
           <button
             className="toolbar__btn"
@@ -1081,6 +1459,30 @@ export function MenuToolbar({ onOpenModal }: Props) {
             disabled={!doc}
           >
             ✂ 자르기
+          </button>
+          <button
+            className="toolbar__btn"
+            title="워터마크 삽입 / 제거"
+            onClick={() => onOpenModal('watermark')}
+            disabled={!doc}
+          >
+            💧 워터마크
+          </button>
+          <button
+            className="toolbar__btn"
+            title="페이지 번호 매기기 / 제거"
+            onClick={() => onOpenModal('pageNumber')}
+            disabled={!doc}
+          >
+            🔢 번호
+          </button>
+          <button
+            className="toolbar__btn"
+            title="스캔 문서 AI / 광학 문자 인식 (OCR)"
+            onClick={() => onOpenModal('ocr')}
+            disabled={!doc}
+          >
+            🔍 OCR
           </button>
         </div>
 

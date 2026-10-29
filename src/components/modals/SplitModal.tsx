@@ -5,6 +5,7 @@
  */
 import { useState } from 'react'
 import { splitPdf } from '../../lib/pdf-operations'
+import { bakeManifestToPdf } from '../../core/services/pdf-engine.service'
 import { useStore } from '../../lib/store'
 
 interface Props {
@@ -13,12 +14,13 @@ interface Props {
 
 export function SplitModal({ onClose }: Props) {
   const doc = useStore((s) => s.document)
+  const pages = useStore((s) => s.pages)
   const [rangesText, setRangesText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [resultMsg, setResultMsg] = useState<string | null>(null)
 
-  const pageCount = doc?.pageCount ?? 0
+  const pageCount = pages.length > 0 ? pages.length : doc?.pageCount ?? 0
   const baseName = (doc?.fileName ?? '문서').replace(/\.pdf$/i, '')
 
   /** "1-3, 5, 7-9" 형식을 [start,end][] (0-base) 로 파싱 */
@@ -53,7 +55,23 @@ export function SplitModal({ onClose }: Props) {
     }
     setBusy(true)
     try {
-      const results = await splitPdf(doc.bytes, ranges)
+      const state = useStore.getState()
+      let sourceBytes = doc.bytes
+      if (state.pages.length > 0) {
+        try {
+          const fontData = await window.workspace.getKoreanFont()
+          const customFont = fontData ? new Uint8Array(fontData) : undefined
+          sourceBytes = await bakeManifestToPdf({
+            pages: state.pages,
+            sources: state.sources,
+            annotations: state.annotations,
+            customFont
+          })
+        } catch (bakeErr) {
+          console.warn('SplitModal: Failed to bake manifest, falling back to doc.bytes', bakeErr)
+        }
+      }
+      const results = await splitPdf(sourceBytes, ranges)
       let savedCount = 0
       for (let i = 0; i < results.length; i++) {
         const [start, end] = ranges[i]

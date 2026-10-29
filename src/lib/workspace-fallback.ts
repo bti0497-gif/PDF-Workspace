@@ -90,6 +90,19 @@ export function initWorkspaceFallback(): void {
     onMenuEvent: () => {
       // 브라우저에서는 네이티브 메뉴가 없으므로 빈 구독 해제 함수 반환
       return () => {}
-    }
+    },
+
+    getStartupFile: async () => null,
+
+    onOpenExternalPath: () => () => {},
+
+    setDocumentDirty: () => {},
+
+    checkForUpdates: async () => ({
+      status: 'web',
+      message: '웹 브라우저 환경에서는 자동 업데이트를 지원하지 않습니다.'
+    }),
+
+    onUpdaterStatus: () => () => {}
   } as WorkspaceApi
 }

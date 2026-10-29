@@ -2,7 +2,7 @@
  * Preload - contextBridge 로 안전하게 렌더러에 API 노출
  */
 import { contextBridge, ipcRenderer } from 'electron'
-import type { OpenFileResult, MenuEvent } from './shared/types'
+import type { OpenFileResult, MenuEvent, UpdateCheckResult } from './shared/types'
 
 const api = {
   /** 단일 PDF 파일 열기 */
@@ -50,6 +50,31 @@ const api = {
     const listener = (_e: unknown, event: MenuEvent) => handler(event)
     ipcRenderer.on('menu:event', listener)
     return () => ipcRenderer.removeListener('menu:event', listener)
+  },
+
+  /** 시작 시 전달된 외부 PDF 파일 경로 조회 */
+  getStartupFile: (): Promise<string | null> => ipcRenderer.invoke('app:getStartupFile'),
+
+  /** 앱 실행 중 외부 더블클릭으로 전달된 파일 경로 리스너 */
+  onOpenExternalPath: (callback: (filePath: string) => void): (() => void) => {
+    const listener = (_e: unknown, filePath: string) => callback(filePath)
+    ipcRenderer.on('file:open-external-path', listener)
+    return () => ipcRenderer.removeListener('file:open-external-path', listener)
+  },
+
+  /** 문서 변경 상태 동기화 (종료 시 저장 확인용) */
+  setDocumentDirty: (dirty: boolean): void => {
+    ipcRenderer.send('app:set-dirty', dirty)
+  },
+
+  /** 업데이트 수동 확인 */
+  checkForUpdates: (): Promise<UpdateCheckResult> => ipcRenderer.invoke('app:checkForUpdates'),
+
+  /** 업데이트 상태 수신 리스너 */
+  onUpdaterStatus: (callback: (data: UpdateCheckResult) => void): (() => void) => {
+    const listener = (_e: unknown, data: UpdateCheckResult) => callback(data)
+    ipcRenderer.on('updater:status', listener)
+    return () => ipcRenderer.removeListener('updater:status', listener)
   }
 }
 

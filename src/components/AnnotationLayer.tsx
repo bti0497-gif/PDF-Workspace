@@ -34,9 +34,14 @@ export function AnnotationLayer({ pageIndex, zoom }: Props) {
     h: number
   } | null>(null)
   const [textInput, setTextInput] = useState('')
+  const [editingTextboxId, setEditingTextboxId] = useState<string | null>(null)
+  const [editTextVal, setEditTextVal] = useState('')
 
   const activeTool = useStore((s) => s.activeTool)
   const toolColor = useStore((s) => s.toolColor)
+  const toolStrokeWidth = useStore((s) => s.toolStrokeWidth)
+  const toolOpacity = useStore((s) => s.toolOpacity)
+  const toolFontSize = useStore((s) => s.toolFontSize)
   const annotations = useStore((s) => s.annotations)
   const addAnnotation = useStore((s) => s.addAnnotation)
   const updateAnnotation = useStore((s) => s.updateAnnotation)
@@ -216,8 +221,10 @@ export function AnnotationLayer({ pageIndex, zoom }: Props) {
           y: y / zoom,
           width: w / zoom,
           height: h / zoom,
-          color: toolColor,
-          strokeWidth: 2,
+          color: activeTool === 'redaction' && toolColor === '#ffeb3b' ? '#000000' : toolColor,
+          strokeWidth: toolStrokeWidth,
+          opacity: activeTool === 'redaction' ? 1 : toolOpacity,
+          fontSize: toolFontSize,
           points:
             activeTool === 'drawing'
               ? points?.map((p) => ({ x: p.x / zoom, y: p.y / zoom }))
@@ -230,7 +237,7 @@ export function AnnotationLayer({ pageIndex, zoom }: Props) {
     setDrag(null)
   }
 
-  // 텍스트 박스 커밋
+  // 텍스트 박스 커밋 (신규)
   const commitTextbox = useCallback(() => {
     if (!draftText || !textInput.trim()) {
       setDraftText(null)
@@ -249,11 +256,34 @@ export function AnnotationLayer({ pageIndex, zoom }: Props) {
       width: w / zoom,
       height: h / zoom,
       color: toolColor,
+      strokeWidth: toolStrokeWidth,
+      opacity: toolOpacity,
+      fontSize: toolFontSize,
       text: textInput
     })
     setDraftText(null)
     setTextInput('')
-  }, [draftText, textInput, addAnnotation, pageIndex, zoom, toolColor])
+  }, [draftText, textInput, addAnnotation, pageIndex, zoom, toolColor, toolStrokeWidth, toolOpacity, toolFontSize])
+
+  // 기존 텍스트 박스 더블 클릭 수정 핸들러
+  const handleDoubleClickTextbox = (e: React.MouseEvent, ann: Annotation) => {
+    e.stopPropagation()
+    setEditingTextboxId(ann.id)
+    setEditTextVal(ann.text ?? '')
+  }
+
+  // 기존 텍스트 박스 수정 커밋
+  const commitEditTextbox = useCallback(() => {
+    if (!editingTextboxId) return
+    const trimmed = editTextVal.trim()
+    if (trimmed) {
+      updateAnnotation(editingTextboxId, { text: trimmed })
+    } else {
+      removeAnnotation(editingTextboxId)
+    }
+    setEditingTextboxId(null)
+    setEditTextVal('')
+  }, [editingTextboxId, editTextVal, updateAnnotation, removeAnnotation])
 
   // 키보드 단축키 (Delete, Ctrl+C, Ctrl+V)
   useEffect(() => {
@@ -323,7 +353,7 @@ export function AnnotationLayer({ pageIndex, zoom }: Props) {
                   width={aw}
                   height={ah}
                   fill={ann.color}
-                  fillOpacity={0.35}
+                  fillOpacity={(ann.opacity ?? 1) * 0.35}
                 />
               )}
               {ann.type === 'rectangle' && (
@@ -334,7 +364,8 @@ export function AnnotationLayer({ pageIndex, zoom }: Props) {
                   height={ah}
                   fill="none"
                   stroke={ann.color}
-                  strokeWidth={ann.strokeWidth ?? 2}
+                  strokeWidth={(ann.strokeWidth ?? 2) * zoom}
+                  opacity={ann.opacity ?? 1}
                 />
               )}
               {ann.type === 'drawing' && ann.points && (
@@ -342,10 +373,39 @@ export function AnnotationLayer({ pageIndex, zoom }: Props) {
                   points={ann.points.map((p) => `${p.x * zoom},${p.y * zoom}`).join(' ')}
                   fill="none"
                   stroke={ann.color}
-                  strokeWidth={ann.strokeWidth ?? 2}
+                  strokeWidth={(ann.strokeWidth ?? 2) * zoom}
+                  opacity={ann.opacity ?? 1}
                   strokeLinejoin="round"
                   strokeLinecap="round"
                 />
+              )}
+              {ann.type === 'redaction' && (
+                <g>
+                  <rect
+                    x={ax}
+                    y={ay}
+                    width={aw}
+                    height={ah}
+                    fill={ann.color || '#000000'}
+                    fillOpacity={1}
+                  />
+                  {aw >= 50 && ah >= 16 && (
+                    <text
+                      x={ax + aw / 2}
+                      y={ay + ah / 2 + 4}
+                      textAnchor="middle"
+                      fill="#ffffff"
+                      fontSize={Math.min(11, Math.max(8, 9 * zoom))}
+                      fontFamily="sans-serif"
+                      fontWeight={600}
+                      letterSpacing="0.05em"
+                      pointerEvents="none"
+                      opacity={0.8}
+                    >
+                      ██ 마스킹
+                    </text>
+                  )}
+                </g>
               )}
               {isSelected && (
                 <rect
@@ -395,6 +455,19 @@ export function AnnotationLayer({ pageIndex, zoom }: Props) {
             strokeLinecap="round"
           />
         )}
+        {drag && drag.mode === 'create' && activeTool === 'redaction' && (
+          <rect
+            x={Math.min(drag.startX, drag.currentX)}
+            y={Math.min(drag.startY, drag.currentY)}
+            width={Math.abs(drag.currentX - drag.startX)}
+            height={Math.abs(drag.currentY - drag.startY)}
+            fill={toolColor === '#ffeb3b' ? '#000000' : toolColor || '#000000'}
+            fillOpacity={0.85}
+            stroke="#e5534b"
+            strokeWidth={1.5}
+            strokeDasharray="4 2"
+          />
+        )}
       </svg>
 
       {/* 텍스트 주석 DOM 렌더링 */}
@@ -402,6 +475,87 @@ export function AnnotationLayer({ pageIndex, zoom }: Props) {
         .filter((a) => a.type === 'textbox')
         .map((ann) => {
           const isSelected = ann.id === selectedAnnotationId
+          const isEditing = editingTextboxId === ann.id
+
+          if (isEditing) {
+            return (
+              <div
+                key={ann.id}
+                style={{
+                  position: 'absolute',
+                  left: ann.x * zoom,
+                  top: ann.y * zoom,
+                  width: Math.max(120, ann.width * zoom),
+                  minHeight: Math.max(28, ann.height * zoom),
+                  zIndex: 10
+                }}
+              >
+                <textarea
+                  autoFocus
+                  value={editTextVal}
+                  onChange={(e) => setEditTextVal(e.target.value)}
+                  onBlur={commitEditTextbox}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      commitEditTextbox()
+                    }
+                  }}
+                  style={{
+                    width: '100%',
+                    minHeight: ann.height * zoom,
+                    fontSize: (ann.fontSize ?? 14) * zoom,
+                    padding: 4 * zoom,
+                    color: ann.color,
+                    border: '2px solid var(--color-accent)',
+                    background: 'rgba(255,255,255,0.98)',
+                    resize: 'both',
+                    outline: 'none',
+                    fontFamily: 'inherit',
+                    borderRadius: 3
+                  }}
+                />
+              </div>
+            )
+          }
+
+          return (
+            <div
+              key={ann.id}
+              onMouseDown={(e) => handleStartMove(e, ann)}
+              onDoubleClick={(e) => handleDoubleClickTextbox(e, ann)}
+              style={{
+                position: 'absolute',
+                left: ann.x * zoom,
+                top: ann.y * zoom,
+                width: ann.width * zoom,
+                minHeight: ann.height * zoom,
+                color: ann.color,
+                opacity: ann.opacity ?? 1,
+                fontSize: (ann.fontSize ?? 14) * zoom,
+                padding: 4 * zoom,
+                border: `${(ann.strokeWidth ?? 1) * zoom}px solid ${ann.color}`,
+                pointerEvents: activeTool === 'select' ? 'auto' : 'none',
+                cursor: activeTool === 'select' ? 'move' : 'crosshair',
+                outline: isSelected ? '1.5px dashed var(--color-accent)' : 'none',
+                background: 'rgba(255,255,255,0.9)',
+                wordBreak: 'break-word',
+                whiteSpace: 'pre-wrap',
+                userSelect: 'none'
+              }}
+              title="더블클릭하여 내용 수정"
+            >
+              {ann.text}
+            </div>
+          )
+        })}
+
+      {/* 스탬프 / 전자서명 / 이미지 DOM 렌더링 */}
+      {pageAnnotations
+        .filter((a) => a.type === 'stamp' || Boolean(a.imageDataUrl))
+        .map((ann) => {
+          const isSelected = ann.id === selectedAnnotationId
+
           return (
             <div
               key={ann.id}
@@ -411,27 +565,38 @@ export function AnnotationLayer({ pageIndex, zoom }: Props) {
                 left: ann.x * zoom,
                 top: ann.y * zoom,
                 width: ann.width * zoom,
-                minHeight: ann.height * zoom,
-                color: ann.color,
-                fontSize: 14 * zoom,
-                padding: 4 * zoom,
-                border: `1px solid ${ann.color}`,
+                height: ann.height * zoom,
+                opacity: ann.opacity ?? 1,
                 pointerEvents: activeTool === 'select' ? 'auto' : 'none',
                 cursor: activeTool === 'select' ? 'move' : 'crosshair',
                 outline: isSelected ? '1.5px dashed var(--color-accent)' : 'none',
-                background: 'rgba(255,255,255,0.9)',
-                wordBreak: 'break-word',
-                whiteSpace: 'pre-wrap',
-                userSelect: 'none'
+                userSelect: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: 'transparent'
               }}
+              title="스탬프 / 서명 / 이미지 (드래그하여 이동 또는 모서리로 크기 조절)"
             >
-              {ann.text}
+              {ann.imageDataUrl && (
+                <img
+                  src={ann.imageDataUrl}
+                  alt="스탬프/이미지"
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'contain',
+                    pointerEvents: 'none',
+                    userSelect: 'none'
+                  }}
+                />
+              )}
             </div>
           )
         })}
 
       {/* 8방향 리사이즈 핸들 (선택 모드 & 주석 선택 시) */}
-      {activeTool === 'select' && selectedAnn && selectedAnn.type !== 'drawing' && (
+      {activeTool === 'select' && selectedAnn && selectedAnn.type !== 'drawing' && !editingTextboxId && (
         <ResizeHandles
           ann={selectedAnn}
           zoom={zoom}
@@ -464,10 +629,10 @@ export function AnnotationLayer({ pageIndex, zoom }: Props) {
             style={{
               width: 180,
               minHeight: 28,
-              fontSize: 14,
+              fontSize: toolFontSize * zoom,
               padding: 4,
               color: toolColor,
-              border: `1px solid ${toolColor}`,
+              border: `${toolStrokeWidth}px solid ${toolColor}`,
               background: 'rgba(255,255,255,0.95)',
               resize: 'both',
               outline: 'none',

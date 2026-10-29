@@ -12,6 +12,8 @@ import { SearchBar } from './SearchBar'
 import { SearchHighlightLayer } from './SearchHighlightLayer'
 import { TextEditLayer } from './TextEditLayer'
 import { clearRenderCache } from '../hooks/usePdfRender'
+import { usePdfDocument } from '../hooks/usePdfDocument'
+import { getRecentFiles, removeRecentFile, clearRecentFiles, RecentFileItem } from '../lib/recent-files'
 import type { VirtualPage } from '../core/domain/page'
 
 interface Props {
@@ -27,11 +29,88 @@ export function ViewerPanel({ onOpenFile }: Props) {
   const zoom = useStore((s) => s.zoom)
   const setCurrentPage = useStore((s) => s.setCurrentPage)
 
+  const { openFileByPath } = usePdfDocument()
+  const [recentFiles, setRecentFiles] = useState<RecentFileItem[]>(() => getRecentFiles())
+
+  // 문서가 닫히거나 변경될 때 최근 파일 목록 갱신
+  useEffect(() => {
+    if (!doc) {
+      setRecentFiles(getRecentFiles())
+    }
+  }, [doc])
+
   const containerRef = useRef<HTMLDivElement>(null)
   const isScrollingBySyncRef = useRef(false)
   const lastScrolledPageRef = useRef<number>(currentPage)
 
   const pageCount = pages.length > 0 ? pages.length : doc?.pageCount ?? 0
+
+  // ── 스페이스바 손바닥 끌기(Hold-to-Pan) 상태 ──
+  const [isSpacePressed, setIsSpacePressed] = useState(false)
+  const [isSpaceDragging, setIsSpaceDragging] = useState(false)
+  const panStartRef = useRef<{ x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null)
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      const isInput =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      if (isInput) return
+
+      if (e.code === 'Space' && !e.repeat && !isSpacePressed) {
+        e.preventDefault()
+        setIsSpacePressed(true)
+      }
+    }
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        setIsSpacePressed(false)
+        setIsSpaceDragging(false)
+        panStartRef.current = null
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+    }
+  }, [isSpacePressed])
+
+  const handlePanMouseDown = (e: React.MouseEvent) => {
+    if (!isSpacePressed || !containerRef.current) return
+    e.preventDefault()
+    setIsSpaceDragging(true)
+    panStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      scrollLeft: containerRef.current.scrollLeft,
+      scrollTop: containerRef.current.scrollTop
+    }
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      if (!panStartRef.current || !containerRef.current) return
+      const dx = moveEvent.clientX - panStartRef.current.x
+      const dy = moveEvent.clientY - panStartRef.current.y
+      containerRef.current.scrollLeft = panStartRef.current.scrollLeft - dx
+      containerRef.current.scrollTop = panStartRef.current.scrollTop - dy
+    }
+
+    const onMouseUp = () => {
+      setIsSpaceDragging(false)
+      panStartRef.current = null
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }
 
   // 단일 페이지 모드: 페이지나 줌 변경 시 상단으로 스크롤
   useEffect(() => {
@@ -155,15 +234,154 @@ export function ViewerPanel({ onOpenFile }: Props) {
           <button className="viewer__empty-btn" onClick={() => void onOpenFile()}>
             PDF 열기
           </button>
+
+          {/* 최근 열어본 문서 목록 */}
+          {recentFiles.length > 0 && (
+            <div
+              className="viewer__recent-section"
+              style={{
+                marginTop: 28,
+                width: '100%',
+                maxWidth: 520,
+                textAlign: 'left'
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: 10,
+                  padding: '0 4px'
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: 'var(--color-text)'
+                  }}
+                >
+                  🕒 최근 열어본 문서 ({recentFiles.length})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearRecentFiles()
+                    setRecentFiles([])
+                  }}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'var(--color-text-muted)',
+                    fontSize: 11,
+                    cursor: 'pointer',
+                    padding: '2px 6px',
+                    borderRadius: 3
+                  }}
+                  title="최근 문서 목록 전체 지우기"
+                >
+                  목록 비우기
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {recentFiles.map((file) => (
+                  <div
+                    key={file.filePath}
+                    onClick={() => void openFileByPath(file.filePath)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '10px 14px',
+                      borderRadius: 6,
+                      background: 'var(--color-bg-elevated)',
+                      border: '1px solid var(--color-border)',
+                      cursor: 'pointer',
+                      transition: 'background 0.15s ease'
+                    }}
+                    title={`${file.filePath}\n클릭하여 바로 열기`}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 12,
+                        minWidth: 0,
+                        flex: 1
+                      }}
+                    >
+                      <span style={{ fontSize: 20 }}>📄</span>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div
+                          style={{
+                            fontSize: 13,
+                            fontWeight: 600,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            color: 'var(--color-text)'
+                          }}
+                        >
+                          {file.fileName}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 11,
+                            color: 'var(--color-text-muted)',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            marginTop: 2
+                          }}
+                        >
+                          {file.pageCount} 페이지 • {file.filePath}
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        removeRecentFile(file.filePath)
+                        setRecentFiles(getRecentFiles())
+                      }}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: 'var(--color-text-muted)',
+                        fontSize: 16,
+                        cursor: 'pointer',
+                        padding: '0 6px',
+                        marginLeft: 8,
+                        borderRadius: 4
+                      }}
+                      title="최근 목록에서 제거"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </main>
     )
   }
 
-  // ── 연속 스크롤 모드 ──
-  if (viewMode === 'continuous') {
+  // ── 연속 스크롤 / 양면 보기(Two-Page) 모드 ──
+  if (viewMode === 'continuous' || viewMode === 'two-page') {
+    const isTwoPage = viewMode === 'two-page'
     return (
-      <main className="viewer viewer--continuous" ref={containerRef}>
+      <main
+        className={`viewer ${isTwoPage ? 'viewer--two-page' : 'viewer--continuous'}`}
+        ref={containerRef}
+        style={isSpacePressed ? { cursor: isSpaceDragging ? 'grabbing' : 'grab' } : undefined}
+        onMouseDown={handlePanMouseDown}
+      >
         <SearchBar />
         {isLoading && (
           <div className="loading-overlay">
@@ -171,7 +389,21 @@ export function ViewerPanel({ onOpenFile }: Props) {
             <div>로드 중...</div>
           </div>
         )}
-        <div className="viewer__continuous-list">
+        <div
+          className="viewer__continuous-list"
+          style={
+            isTwoPage
+              ? {
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(2, max-content)',
+                  justifyContent: 'center',
+                  gap: '24px',
+                  alignItems: 'start',
+                  padding: '24px 16px'
+                }
+              : undefined
+          }
+        >
           {pages.map((vPage, index) => (
             <ContinuousPageItem
               key={vPage.id}
@@ -192,7 +424,12 @@ export function ViewerPanel({ onOpenFile }: Props) {
   const rotation = activePage?.rotation ?? doc.rotations[currentPage] ?? 0
 
   return (
-    <main className="viewer" ref={containerRef}>
+    <main
+      className="viewer"
+      ref={containerRef}
+      style={isSpacePressed ? { cursor: isSpaceDragging ? 'grabbing' : 'grab' } : undefined}
+      onMouseDown={handlePanMouseDown}
+    >
       <SearchBar />
       {isLoading && (
         <div className="loading-overlay">

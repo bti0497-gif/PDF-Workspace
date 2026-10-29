@@ -7,3 +7,5 @@ test-output/
 Thumbs.db
 .vscode/
 .idea/
+public/cmaps/
+public/standard_fonts/

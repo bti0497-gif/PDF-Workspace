@@ -29,6 +29,25 @@ export interface PageFormat {
   height: number // pt
 }
 
+/** 워터마크 설정 */
+export interface WatermarkConfig {
+  text: string
+  fontSize: number      // e.g. 48
+  color: string         // hex e.g. '#e5534b'
+  opacity: number       // 0.05 ~ 0.9, e.g. 0.25
+  rotation: number      // degrees e.g. -45, 0, 45
+  tiled?: boolean       // true = 3x3 tiled grid, false = center
+}
+
+/** 페이지 번호(Header/Footer) 설정 */
+export interface PageNumberConfig {
+  text: string          // formatted text for this page, e.g. "- 1 -" or "1 / 10"
+  position: 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right'
+  fontSize: number      // e.g. 11
+  color: string         // hex e.g. '#333333'
+  margin: number        // pt from edge, e.g. 24
+}
+
 /** 본문 텍스트 인라인 교체 모델 */
 export interface TextReplacement {
   id: string
@@ -49,6 +68,11 @@ export interface TextReplacement {
   fontSize: number
   color: string
   backgroundColor?: string
+  /** 고도화: 원본 아이템 ID, 원본 폭, 정렬 */
+  originalItemId?: string
+  align?: 'left' | 'center' | 'right'
+  origVw?: number
+  origPdfWidth?: number
 }
 
 export const STANDARD_PAGE_FORMATS: PageFormat[] = [
@@ -77,6 +101,10 @@ export interface VirtualPage {
   cropMargins?: CropMargins
   /** 본문 텍스트 인라인 교체 목록 */
   textReplacements?: TextReplacement[]
+  /** 워터마크 설정 */
+  watermarkConfig?: WatermarkConfig
+  /** 페이지 번호 설정 */
+  pageNumberConfig?: PageNumberConfig
 }
 
 let _idCounter = 0
@@ -126,13 +154,47 @@ export function reorderVirtualPages(
   return next
 }
 
+/** 여러 페이지 순서 일괄 재배열 (순수 함수) */
+export function reorderMultipleVirtualPages(
+  pages: VirtualPage[],
+  fromIndices: number[],
+  targetIndex: number
+): { pages: VirtualPage[]; newSelectedIndices: number[] } {
+  if (fromIndices.length === 0 || pages.length === 0) {
+    return { pages, newSelectedIndices: fromIndices }
+  }
+  const validFromIndices = [...new Set(fromIndices)]
+    .filter((idx) => idx >= 0 && idx < pages.length)
+    .sort((a, b) => a - b)
+  if (validFromIndices.length === 0) {
+    return { pages, newSelectedIndices: [] }
+  }
+
+  const fromSet = new Set(validFromIndices)
+  const movingPages = validFromIndices.map((idx) => pages[idx])
+  const removedBeforeTarget = validFromIndices.filter((idx) => idx < targetIndex).length
+  const insertionIndex = Math.max(
+    0,
+    Math.min(pages.length - validFromIndices.length, targetIndex - removedBeforeTarget)
+  )
+
+  const remaining = pages.filter((_, idx) => !fromSet.has(idx))
+  const next = [
+    ...remaining.slice(0, insertionIndex),
+    ...movingPages,
+    ...remaining.slice(insertionIndex)
+  ]
+  const newSelectedIndices = movingPages.map((_, offset) => insertionIndex + offset)
+  return { pages: next, newSelectedIndices }
+}
+
 /** 페이지 회전 (순수 함수) */
 export function rotateVirtualPages(
   pages: VirtualPage[],
   targetIndices: number[],
-  direction: 'left' | 'right'
+  direction: 'left' | 'right' | '180'
 ): VirtualPage[] {
-  const delta = direction === 'right' ? 90 : -90
+  const delta = direction === '180' ? 180 : direction === 'right' ? 90 : -90
   const indexSet = new Set(targetIndices)
   return pages.map((page, idx) => {
     if (!indexSet.has(idx)) return page
@@ -270,6 +332,52 @@ export function removeTextReplacementOnVirtualPage(
     return {
       ...page,
       textReplacements: existing.filter((r) => r.id !== replacementId)
+    }
+  })
+}
+
+/** 워터마크 적용/제거 (순수 함수) */
+export function applyWatermarkToVirtualPages(
+  pages: VirtualPage[],
+  targetIndices: number[],
+  config: WatermarkConfig | undefined
+): VirtualPage[] {
+  const indexSet = new Set(targetIndices)
+  return pages.map((page, idx) => {
+    if (!indexSet.has(idx)) return page
+    return {
+      ...page,
+      watermarkConfig: config ? { ...config } : undefined
+    }
+  })
+}
+
+/** 페이지 번호 매기기 적용/제거 (순수 함수) */
+export function applyPageNumberToVirtualPages(
+  pages: VirtualPage[],
+  targetIndices: number[],
+  formatFn: (
+    pageOrderIdx: number,
+    totalSelected: number,
+    globalIdx: number,
+    totalPages: number
+  ) => PageNumberConfig | undefined
+): VirtualPage[] {
+  const sortedTargets = [...new Set(targetIndices)]
+    .filter((idx) => idx >= 0 && idx < pages.length)
+    .sort((a, b) => a - b)
+  const targetMap = new Map<number, number>()
+  sortedTargets.forEach((globalIdx, orderIdx) => {
+    targetMap.set(globalIdx, orderIdx)
+  })
+
+  return pages.map((page, idx) => {
+    if (!targetMap.has(idx)) return page
+    const orderIdx = targetMap.get(idx)!
+    const config = formatFn(orderIdx, sortedTargets.length, idx, pages.length)
+    return {
+      ...page,
+      pageNumberConfig: config ? { ...config } : undefined
     }
   })
 }

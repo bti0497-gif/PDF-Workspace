@@ -8,9 +8,11 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-/** 번들에 포함된 한글 폰트(NanumGothic) 경로 - dev/prod 모두 동작 */
+/** 번들에 포함된 한글 폰트(NanumGothic) 경로 - dev/prod 모두 완벽 지원 */
 function getFontPath(): string {
-  // dev: 프로젝트 루트/assets/fonts, prod: resources/assets/fonts
+  if (app.isPackaged) {
+    return join(process.resourcesPath, 'assets/fonts/NanumGothic.ttf')
+  }
   return join(__dirname, '../../assets/fonts/NanumGothic.ttf')
 }
 

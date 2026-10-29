@@ -23,7 +23,13 @@ export interface PageOperation {
 }
 
 /** 주석 종류 */
-export type AnnotationType = 'highlight' | 'rectangle' | 'textbox' | 'drawing'
+export type AnnotationType =
+  | 'highlight'
+  | 'rectangle'
+  | 'textbox'
+  | 'drawing'
+  | 'stamp'
+  | 'redaction'
 
 /** 단일 주석 (PDF 좌표계, 원점 좌하단) */
 export interface Annotation {
@@ -37,10 +43,14 @@ export interface Annotation {
   height: number
   color: string
   strokeWidth?: number
+  opacity?: number
+  fontSize?: number
   /** 자유 그리기인 경우 경로 점들 */
   points?: { x: number; y: number }[]
   /** 텍스트 박스인 경우 내용 */
   text?: string
+  /** 스탬프/서명/이미지인 경우 Base64 Data URL (data:image/png;base64,... 등) */
+  imageDataUrl?: string
 }
 
 /** 합치기/분할에 사용할 파일 항목 */
@@ -99,3 +109,12 @@ export type MenuEvent =
   | 'page:next'
   | 'help:about'
   | 'help:shortcuts'
+
+/** 업데이트 확인 결과 */
+export interface UpdateCheckResult {
+  status: 'dev' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error' | string
+  version?: string
+  message?: string
+  percent?: number
+}
+

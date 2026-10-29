@@ -167,7 +167,7 @@ export async function applyAnnotations(
       case 'highlight': {
         page.drawRectangle({
           x: ann.x,
-          y: ann.y,
+          y: ph - (ann.y ?? 0) - (ann.height ?? 0),
           width: ann.width,
           height: ann.height,
           color,
@@ -178,7 +178,7 @@ export async function applyAnnotations(
       case 'rectangle': {
         page.drawRectangle({
           x: ann.x,
-          y: ann.y,
+          y: ph - (ann.y ?? 0) - (ann.height ?? 0),
           width: ann.width,
           height: ann.height,
           borderColor: color,
@@ -194,7 +194,7 @@ export async function applyAnnotations(
           // pdf-lib 텍스트는 기준점이 텍스트 기준선 -> 상자 상단에서 폰트 높이만큼 내림
           page.drawText(text, {
             x: ann.x + 4,
-            y: ann.y + 4,
+            y: ph - (ann.y ?? 0) - fontSize,
             size: fontSize,
             font,
             color,
@@ -204,7 +204,7 @@ export async function applyAnnotations(
         // 테두리
         page.drawRectangle({
           x: ann.x,
-          y: ann.y,
+          y: ph - (ann.y ?? 0) - (ann.height ?? 0),
           width: ann.width,
           height: ann.height,
           borderColor: color,
@@ -225,6 +225,49 @@ export async function applyAnnotations(
             thickness: ann.strokeWidth ?? 2
           })
         }
+        break
+      }
+      case 'stamp': {
+        if (ann.imageDataUrl) {
+          try {
+            const base64Data = ann.imageDataUrl.split(',')[1]
+            if (base64Data) {
+              const binStr = atob(base64Data)
+              const imgBytes = new Uint8Array(binStr.length)
+              for (let b = 0; b < binStr.length; b++) {
+                imgBytes[b] = binStr.charCodeAt(b)
+              }
+              const isJpg =
+                ann.imageDataUrl.startsWith('data:image/jpeg') ||
+                ann.imageDataUrl.startsWith('data:image/jpg')
+              const embeddedImg = isJpg
+                ? await doc.embedJpg(imgBytes)
+                : await doc.embedPng(imgBytes)
+              const w = ann.width ?? 120
+              const h = ann.height ?? 60
+              page.drawImage(embeddedImg, {
+                x: ann.x,
+                y: ph - ann.y - h,
+                width: w,
+                height: h,
+                opacity: ann.opacity ?? 1
+              })
+            }
+          } catch (err) {
+            console.warn('스탬프/이미지 주석 저장 실패:', err)
+          }
+        }
+        break
+      }
+      case 'redaction': {
+        page.drawRectangle({
+          x: ann.x,
+          y: ph - ann.y - ann.height,
+          width: ann.width,
+          height: ann.height,
+          color: hexToRgb(ann.color || '#000000'),
+          opacity: 1
+        })
         break
       }
     }

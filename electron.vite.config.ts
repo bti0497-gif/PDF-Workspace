@@ -24,14 +24,15 @@ export default defineConfig({
     }
   },
   renderer: {
-    root: 'src',
+    root: resolve(__dirname, 'src'),
+    publicDir: resolve(__dirname, 'public'),
     server: {
       port: 5873,
       strictPort: false
     },
     resolve: {
       alias: {
-        '@renderer': resolve('src')
+        '@renderer': resolve(__dirname, 'src')
       }
     },
     plugins: [react()],

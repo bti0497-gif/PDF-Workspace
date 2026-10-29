@@ -12,6 +12,7 @@ import type { SourceDocument } from '../domain/document'
 import type { BookmarkNode } from '../domain/bookmark'
 import { generateBookmarkId } from '../domain/bookmark'
 import type { Annotation } from '../../../electron/shared/types'
+import type { DocumentMetadata } from '../../lib/store'
 
 /** #RRGGBB -> pdf-lib rgb */
 function hexToRgb(hex: string): ReturnType<typeof rgb> {
@@ -31,8 +32,9 @@ export async function bakeManifestToPdf(params: {
   sources: Map<string, SourceDocument>
   annotations?: Annotation[]
   customFont?: Uint8Array
+  metadata?: DocumentMetadata
 }): Promise<Uint8Array> {
-  const { pages, sources, annotations = [], customFont } = params
+  const { pages, sources, annotations = [], customFont, metadata } = params
 
   if (pages.length === 0) {
     throw new Error('저장할 페이지가 없습니다.')
@@ -138,14 +140,18 @@ export async function bakeManifestToPdf(params: {
   const hasTextReplacements = pages.some(
     (p) => p.textReplacements && p.textReplacements.length > 0
   )
+  const hasWatermarks = pages.some((p) => Boolean(p.watermarkConfig))
+  const hasPageNumbers = pages.some((p) => Boolean(p.pageNumberConfig))
 
-  // 폰트 임베딩 (주석 또는 본문 텍스트 수정이 있는 경우)
+  // 폰트 임베딩 (주석, 본문 텍스트 수정, 워터마크, 페이지 번호가 있는 경우)
   let embeddedFont: Awaited<ReturnType<typeof dstDoc.embedFont>> | null = null
-  if (annotations.length > 0 || hasTextReplacements) {
+  if (annotations.length > 0 || hasTextReplacements || hasWatermarks || hasPageNumbers) {
     embeddedFont = customFont
       ? await dstDoc.embedFont(customFont, { subset: true })
       : await dstDoc.embedFont(StandardFonts.Helvetica)
   }
+
+  const fontToUse = embeddedFont ?? (await dstDoc.embedFont(StandardFonts.Helvetica))
 
   // 1) 본문 텍스트 소거 및 나눔고딕 대체 합성 (Text Replacement Baking)
   if (hasTextReplacements) {
@@ -156,36 +162,150 @@ export async function bakeManifestToPdf(params: {
 
       for (const tr of vPage.textReplacements) {
         const bgCol = tr.backgroundColor ? hexToRgb(tr.backgroundColor) : rgb(1, 1, 1)
+        const fontSize = tr.fontSize || 12
+        const whiteoutW = tr.origPdfWidth ?? tr.pdfWidth
+        const whiteoutH = fontSize * 1.06
+        const whiteoutY = tr.pdfY - fontSize * 0.18
 
         // 원본 텍스트 소거 (Whiteout)
         page.drawRectangle({
           x: tr.pdfX - 1,
-          y: tr.pdfY - 1,
-          width: tr.pdfWidth + 2,
-          height: tr.pdfHeight + 2,
+          y: whiteoutY,
+          width: whiteoutW + 2,
+          height: whiteoutH,
           color: bgCol,
           opacity: 1
         })
 
         // 새 텍스트 합성
-        if (tr.newText && embeddedFont) {
+        if (tr.newText && fontToUse) {
           const textColor = hexToRgb(tr.color || '#000000')
+          let textW = 0
+          try {
+            textW = fontToUse.widthOfTextAtSize(tr.newText, fontSize)
+          } catch {
+            textW = tr.newText.length * fontSize * 0.6
+          }
+
+          let drawX = tr.pdfX
+          if (tr.align === 'center') {
+            drawX = tr.pdfX + (whiteoutW - textW) / 2
+          } else if (tr.align === 'right') {
+            drawX = tr.pdfX + (whiteoutW - textW)
+          }
+
           page.drawText(tr.newText, {
-            x: tr.pdfX,
+            x: drawX,
             y: tr.pdfY,
-            size: tr.fontSize || 12,
-            font: embeddedFont,
-            color: textColor,
-            maxWidth: tr.pdfWidth * 1.5
+            size: fontSize,
+            font: fontToUse,
+            color: textColor
           })
         }
       }
     }
   }
 
-  // 2) 주석 합성 (Annotation Baking)
+  // 2) 워터마크 및 페이지 번호 합성 (Watermark & Page Numbering Baking)
+  for (let i = 0; i < pages.length; i++) {
+    const vPage = pages[i]
+    const page = dstPages[i]
+    if (!page) continue
+    const { width: pw, height: ph } = page.getSize()
+
+    // 워터마크
+    if (vPage.watermarkConfig) {
+      const wm = vPage.watermarkConfig
+      const color = hexToRgb(wm.color)
+      const rad = (wm.rotation * Math.PI) / 180
+      const cos = Math.cos(rad)
+      const sin = Math.sin(rad)
+      let textW = 0
+      try {
+        textW = fontToUse.widthOfTextAtSize(wm.text, wm.fontSize)
+      } catch {
+        textW = wm.fontSize * wm.text.length * 0.7
+      }
+      const textH = wm.fontSize
+
+      const drawWatermarkAt = (cx: number, cy: number, scale = 1) => {
+        const curSize = wm.fontSize * scale
+        const curW = textW * scale
+        const curH = textH * scale
+        const x = cx - (curW / 2) * cos + (curH / 3) * sin
+        const y = cy - (curW / 2) * sin - (curH / 3) * cos
+        try {
+          page.drawText(wm.text, {
+            x,
+            y,
+            size: curSize,
+            font: fontToUse,
+            color,
+            opacity: wm.opacity,
+            rotate: degrees(wm.rotation)
+          })
+        } catch (e) {
+          console.warn('워터마크 그리기 실패:', e)
+        }
+      }
+
+      if (wm.tiled) {
+        const cols = [pw / 6, pw / 2, (5 * pw) / 6]
+        const rows = [ph / 6, ph / 2, (5 * ph) / 6]
+        for (const cx of cols) {
+          for (const cy of rows) {
+            drawWatermarkAt(cx, cy, 0.7)
+          }
+        }
+      } else {
+        drawWatermarkAt(pw / 2, ph / 2, 1)
+      }
+    }
+
+    // 페이지 번호
+    if (vPage.pageNumberConfig) {
+      const pn = vPage.pageNumberConfig
+      const color = hexToRgb(pn.color)
+      let textW = 0
+      try {
+        textW = fontToUse.widthOfTextAtSize(pn.text, pn.fontSize)
+      } catch {
+        textW = pn.fontSize * pn.text.length * 0.6
+      }
+      let x = pn.margin
+      let y = pn.margin
+
+      if (pn.position.startsWith('top')) {
+        y = ph - pn.margin - pn.fontSize
+      } else {
+        y = pn.margin
+      }
+
+      if (pn.position.endsWith('left')) {
+        x = pn.margin
+      } else if (pn.position.endsWith('right')) {
+        x = pw - pn.margin - textW
+      } else {
+        x = (pw - textW) / 2
+      }
+
+      try {
+        page.drawText(pn.text, {
+          x,
+          y,
+          size: pn.fontSize,
+          font: fontToUse,
+          color
+        })
+      } catch (e) {
+        console.warn('페이지 번호 그리기 실패:', e)
+      }
+    }
+  }
+
+  // 3) 주석 합성 (Annotation Baking)
   if (annotations.length > 0) {
-    const font = embeddedFont ?? (await dstDoc.embedFont(StandardFonts.Helvetica))
+    const font = fontToUse
 
     for (const ann of annotations) {
       const page = dstPages[ann.pageIndex]
@@ -197,43 +317,47 @@ export async function bakeManifestToPdf(params: {
         case 'highlight':
           page.drawRectangle({
             x: ann.x,
-            y: ann.y,
+            y: ph - (ann.y ?? 0) - (ann.height ?? 0),
             width: ann.width,
             height: ann.height,
             color,
-            opacity: 0.35
+            opacity: ann.opacity !== undefined ? ann.opacity * 0.5 : 0.35
           })
           break
         case 'rectangle':
           page.drawRectangle({
             x: ann.x,
-            y: ann.y,
+            y: ph - (ann.y ?? 0) - (ann.height ?? 0),
             width: ann.width,
             height: ann.height,
             borderColor: color,
             borderWidth: ann.strokeWidth ?? 2,
+            borderOpacity: ann.opacity ?? 1,
             opacity: 0
           })
           break
         case 'textbox': {
+          const fontSize = ann.fontSize ?? 14
           const text = (ann.text ?? '').trim()
           if (text) {
             page.drawText(text, {
               x: ann.x + 4,
-              y: ann.y + 4,
-              size: 14,
+              y: ph - (ann.y ?? 0) - fontSize,
+              size: fontSize,
               font,
               color,
-              maxWidth: ann.width - 8
+              opacity: ann.opacity ?? 1,
+              maxWidth: Math.max(10, ann.width - 8)
             })
           }
           page.drawRectangle({
             x: ann.x,
-            y: ann.y,
+            y: ph - (ann.y ?? 0) - (ann.height ?? 0),
             width: ann.width,
             height: ann.height,
             borderColor: color,
-            borderWidth: 1,
+            borderWidth: ann.strokeWidth ?? 1,
+            borderOpacity: ann.opacity ?? 1,
             opacity: 0
           })
           break
@@ -247,13 +371,75 @@ export async function bakeManifestToPdf(params: {
               start: { x: a.x, y: ph - a.y },
               end: { x: b.x, y: ph - b.y },
               color,
-              thickness: ann.strokeWidth ?? 2
+              thickness: ann.strokeWidth ?? 2,
+              opacity: ann.opacity ?? 1
             })
           }
           break
         }
+        case 'stamp': {
+          if (ann.imageDataUrl) {
+            try {
+              const base64Data = ann.imageDataUrl.split(',')[1]
+              if (base64Data) {
+                const binStr = atob(base64Data)
+                const imgBytes = new Uint8Array(binStr.length)
+                for (let b = 0; b < binStr.length; b++) {
+                  imgBytes[b] = binStr.charCodeAt(b)
+                }
+                const isJpg =
+                  ann.imageDataUrl.startsWith('data:image/jpeg') ||
+                  ann.imageDataUrl.startsWith('data:image/jpg')
+                const embeddedImg = isJpg
+                  ? await dstDoc.embedJpg(imgBytes)
+                  : await dstDoc.embedPng(imgBytes)
+
+                const w = ann.width ?? 120
+                const h = ann.height ?? 60
+                const x = ann.x
+                const y = ph - ann.y - h
+                page.drawImage(embeddedImg, {
+                  x,
+                  y,
+                  width: w,
+                  height: h,
+                  opacity: ann.opacity ?? 1
+                })
+              }
+            } catch (err) {
+              console.warn('스탬프/이미지 주석 베이킹 실패:', err)
+            }
+          }
+          break
+        }
+        case 'redaction': {
+          // 민감정보 먹줄 영구 마스킹 (100% 불투명 솔리드 블록)
+          page.drawRectangle({
+            x: ann.x,
+            y: ph - (ann.y ?? 0) - (ann.height ?? 0),
+            width: ann.width,
+            height: ann.height,
+            color: hexToRgb(ann.color || '#000000'),
+            opacity: 1
+          })
+          break
+        }
       }
     }
+  }
+
+  // 4) 문서 메타데이터 (Document Properties)
+  if (metadata) {
+    if (metadata.title !== undefined) dstDoc.setTitle(metadata.title)
+    if (metadata.author !== undefined) dstDoc.setAuthor(metadata.author)
+    if (metadata.subject !== undefined) dstDoc.setSubject(metadata.subject)
+    if (metadata.keywords !== undefined) {
+      const kw = Array.isArray(metadata.keywords)
+        ? metadata.keywords
+        : metadata.keywords.split(',').map((s) => s.trim()).filter(Boolean)
+      dstDoc.setKeywords(kw)
+    }
+    if (metadata.creator !== undefined) dstDoc.setCreator(metadata.creator)
   }
 
   return dstDoc.save()
@@ -266,7 +452,8 @@ export async function bakeManifestToPdf(params: {
 export async function extractVirtualPagesToPdf(
   pages: VirtualPage[],
   sources: Map<string, SourceDocument>,
-  targetIndices: number[]
+  targetIndices: number[],
+  customFont?: Uint8Array
 ): Promise<Uint8Array> {
   const selectedPages = targetIndices
     .filter((idx) => idx >= 0 && idx < pages.length)
@@ -278,7 +465,8 @@ export async function extractVirtualPagesToPdf(
 
   return bakeManifestToPdf({
     pages: selectedPages,
-    sources
+    sources,
+    customFont
   })
 }
 

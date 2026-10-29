@@ -10,6 +10,31 @@ import { usePdfDocument } from './usePdfDocument'
 import { bakeManifestToPdf, extractVirtualPagesToPdf } from '../core/services/pdf-engine.service'
 import type { MenuEvent } from '../../electron/shared/types'
 
+/** 화면 뷰어 크기 기반 실시간 폭 맞춤 / 페이지 맞춤 배율 계산 */
+export function calculateFitZoom(mode: 'width' | 'page'): number | null {
+  const viewerEl = document.querySelector('.viewer') as HTMLElement | null
+  const store = useStore.getState()
+  const currentPage = store.currentPage
+  const currentVPage = store.pages[currentPage]
+  if (!viewerEl || !currentVPage) return null
+
+  const isRotated = (currentVPage.rotation ?? 0) % 180 !== 0
+  const pageWidth = isRotated ? (currentVPage.height ?? 595.28) : (currentVPage.width ?? 595.28)
+  const pageHeight = isRotated ? (currentVPage.width ?? 841.89) : (currentVPage.height ?? 841.89)
+
+  const availWidth = Math.max(100, viewerEl.clientWidth - 64)
+  const availHeight = Math.max(100, viewerEl.clientHeight - 64)
+
+  if (mode === 'width') {
+    return Math.max(0.25, Math.min(5, +(availWidth / pageWidth).toFixed(2)))
+  } else {
+    return Math.max(
+      0.25,
+      Math.min(5, +Math.min(availWidth / pageWidth, availHeight / pageHeight).toFixed(2))
+    )
+  }
+}
+
 export function useMenuActions() {
   const store = useStore
   const { openFile } = usePdfDocument()
@@ -32,6 +57,15 @@ export function useMenuActions() {
           await saveCurrentDocument(event === 'file:save')
           break
         case 'file:close':
+          if (store.getState().isDirty) {
+            if (
+              !window.confirm(
+                '저장하지 않은 변경 사항이 있습니다. 저장하지 않고 문서를 닫으시겠습니까?'
+              )
+            ) {
+              break
+            }
+          }
           store.getState().setDocument(null)
           break
 
@@ -79,12 +113,16 @@ export function useMenuActions() {
         case 'view:zoomReset':
           s.resetZoom()
           break
-        case 'view:fitWidth':
-          s.setZoom(1.2)
+        case 'view:fitWidth': {
+          const z = calculateFitZoom('width')
+          if (z) s.setZoom(z)
           break
-        case 'view:fitPage':
-          s.setZoom(0.9)
+        }
+        case 'view:fitPage': {
+          const z = calculateFitZoom('page')
+          if (z) s.setZoom(z)
           break
+        }
         case 'view:toggleThumbnails':
           s.toggleThumbnails()
           break
@@ -146,7 +184,8 @@ async function saveCurrentDocument(saveInPlace: boolean): Promise<void> {
     pages: s.pages,
     sources: s.sources,
     annotations: s.annotations,
-    customFont: fontBytes
+    customFont: fontBytes,
+    metadata: s.metadata
   })
 
   if (saveInPlace && doc.filePath) {
@@ -182,10 +221,20 @@ export async function extractSelectedPagesAction(indices: number[]): Promise<voi
   const doc = s.document
   if (!doc || indices.length === 0) return
 
-  const extracted = await extractVirtualPagesToPdf(s.pages, s.sources, indices)
+  let fontBytes: Uint8Array | undefined
+  try {
+    const fontData = await window.workspace.getKoreanFont()
+    if (fontData) fontBytes = new Uint8Array(fontData)
+  } catch {
+    /* 기본 폰트 사용 */
+  }
+
+  const extracted = await extractVirtualPagesToPdf(s.pages, s.sources, indices, fontBytes)
   const baseName = doc.fileName.replace(/\.pdf$/i, '')
   const suffix =
     indices.length === 1 ? `_p${indices[0] + 1}` : `_선택${indices.length}페이지`
 
   await window.workspace.savePdfBytes(Array.from(extracted), `${baseName}${suffix}.pdf`)
 }
+
+export { insertBlankPageAt } from '../core/services/blank-page.service'

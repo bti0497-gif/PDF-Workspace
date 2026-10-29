@@ -7,6 +7,9 @@ import { useStore } from '../lib/store'
 import type { DocumentMeta } from '../lib/store'
 import { ROOT_DOC_ID } from '../core/domain/document'
 import { parsePdfBookmarks } from '../core/services/pdf-engine.service'
+import { clearTextEditorCache } from '../core/services/text-editor.service'
+import { clearRenderCache } from './usePdfRender'
+import { addRecentFile } from '../lib/recent-files'
 import '../lib/pdf-worker' // 워커 설정 부수효과
 
 /** 로드된 pdfjs 문서 객체 캐시 (소스 문서별 관리) */
@@ -25,7 +28,12 @@ export async function getOrLoadPdfDoc(
   const existing = pdfDocProxies.get(sourceDocId)
   if (existing) return existing
 
-  const task = pdfjsLib.getDocument({ data: bytes })
+  const task = pdfjsLib.getDocument({
+    data: bytes,
+    cMapUrl: './cmaps/',
+    cMapPacked: true,
+    standardFontDataUrl: './standard_fonts/'
+  })
   const doc = await task.promise
   pdfDocProxies.set(sourceDocId, doc)
   return doc
@@ -43,6 +51,10 @@ export async function loadPdfFromBytes(
   filePath: string | null
 ): Promise<LoadedPdfResult> {
   console.log('[loadPdfFromBytes] Loading PDF:', fileName, 'Length:', bytes.length)
+  // 기존 에디터 및 렌더 캐시 초기화
+  clearTextEditorCache()
+  clearRenderCache()
+
   // 기존 문서들 메모리 정리
   for (const doc of pdfDocProxies.values()) {
     try {
@@ -55,8 +67,9 @@ export async function loadPdfFromBytes(
 
   const task = pdfjsLib.getDocument({
     data: bytes,
-    cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/cmaps/',
-    cMapPacked: true
+    cMapUrl: './cmaps/',
+    cMapPacked: true,
+    standardFontDataUrl: './standard_fonts/'
   })
   const doc = await task.promise
   console.log('[loadPdfFromBytes] PDF loaded successfully! Pages:', doc.numPages)
@@ -76,6 +89,16 @@ export async function loadPdfFromBytes(
   parsePdfBookmarks(doc).then((bookmarks) => {
     useStore.getState().setBookmarks(bookmarks)
   })
+
+  // 최근 파일 목록에 기록
+  if (filePath) {
+    addRecentFile({
+      fileName,
+      filePath,
+      pageCount: doc.numPages,
+      openedAt: Date.now()
+    })
+  }
 
   return {
     meta: {
@@ -152,6 +175,67 @@ export function usePdfDocument() {
     }
   }, [setDocument, setLoading])
 
+  /** 경로로부터 파일 열기 (최근 문서 클릭 등) */
+  const openFileByPath = useCallback(
+    async (filePath: string) => {
+      setLoading(true)
+      const setLoadingProgress = useStore.getState().setLoadingProgress
+      try {
+        setLoadingProgress({
+          visible: true,
+          percent: 20,
+          title: 'PDF 문서 로드 중',
+          detail: `파일을 읽고 있습니다...`
+        })
+
+        const data = await window.workspace.readFile(filePath)
+        if (!data) throw new Error('파일 데이터를 읽을 수 없습니다.')
+
+        const fileName = filePath.replace(/^.*[\\/]/, '') || 'document.pdf'
+        const bytes = new Uint8Array(data)
+
+        setLoadingProgress({
+          visible: true,
+          percent: 60,
+          title: 'PDF 문서 로드 중',
+          detail: '페이지 구조 및 폰트 파싱 중...'
+        })
+
+        const { meta, dimensions } = await loadPdfFromBytes(
+          bytes,
+          fileName,
+          filePath
+        )
+
+        setLoadingProgress({
+          visible: true,
+          percent: 95,
+          title: 'PDF 문서 로드 중',
+          detail: `${meta.pageCount}개 페이지 뷰어 준비 중...`
+        })
+
+        setDocument(meta, dimensions)
+
+        setLoadingProgress({
+          visible: true,
+          percent: 100,
+          title: '완료',
+          detail: '문서가 성공적으로 로드되었습니다.'
+        })
+        setTimeout(() => setLoadingProgress(null), 300)
+        return meta
+      } catch (err) {
+        console.error('최근 파일 열기 실패:', err)
+        setLoadingProgress(null)
+        alert(`파일을 열지 못했습니다: ${err instanceof Error ? err.message : String(err)}`)
+        return null
+      } finally {
+        setLoading(false)
+      }
+    },
+    [setDocument, setLoading]
+  )
+
   /** 바이트 배열로부터 직접 로드 (합치기/분할 결과) */
   const loadFromBytes = useCallback(
     async (bytes: Uint8Array, fileName: string, filePath: string | null) => {
@@ -175,5 +259,5 @@ export function usePdfDocument() {
     []
   )
 
-  return { openFile, loadFromBytes, applyRotation }
+  return { openFile, openFileByPath, loadFromBytes, applyRotation }
 }

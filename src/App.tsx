@@ -16,6 +16,12 @@ import { ShortcutsModal } from './components/modals/ShortcutsModal'
 import { NormalizeModal } from './components/modals/NormalizeModal'
 import { CropModal } from './components/modals/CropModal'
 import { PrintModal } from './components/modals/PrintModal'
+import { WatermarkModal } from './components/modals/WatermarkModal'
+import { PageNumberModal } from './components/modals/PageNumberModal'
+import { StampModal } from './components/modals/StampModal'
+import { ExportImageModal } from './components/modals/ExportImageModal'
+import { OcrModal } from './components/modals/OcrModal'
+import { MetadataModal } from './components/modals/MetadataModal'
 import { ProgressBarModal } from './components/modals/ProgressBarModal'
 import { SplashScreen } from './components/SplashScreen'
 import { useStore } from './lib/store'
@@ -26,11 +32,25 @@ import type { MenuEvent } from '../electron/shared/types'
 export default function App() {
   const theme = useStore((s) => s.theme)
   const document = useStore((s) => s.document)
-  const { openFile } = usePdfDocument()
+  const isDirty = useStore((s) => s.isDirty)
+  const { openFile, openFileByPath } = usePdfDocument()
   const { handleMenuEvent } = useMenuActions()
 
   const [modal, setModal] = useState<
-    null | 'merge' | 'split' | 'about' | 'shortcuts' | 'normalize' | 'crop' | 'print'
+    | null
+    | 'merge'
+    | 'split'
+    | 'about'
+    | 'shortcuts'
+    | 'normalize'
+    | 'crop'
+    | 'print'
+    | 'watermark'
+    | 'pageNumber'
+    | 'stamp'
+    | 'exportImage'
+    | 'ocr'
+    | 'metadata'
   >(null)
   const [isInitialized, setIsInitialized] = useState(false)
 
@@ -38,6 +58,29 @@ export default function App() {
   useEffect(() => {
     document_root_setTheme(theme)
   }, [theme])
+
+  // 문서 변경(isDirty) 상태를 메인 프로세스에 동기화 (창 닫기 시 경고 확인용)
+  useEffect(() => {
+    window.workspace.setDocumentDirty?.(isDirty)
+  }, [isDirty])
+
+  // 시작 파일(.pdf 더블클릭) 및 앱 실행 중 외부 열기 이벤트 수신
+  useEffect(() => {
+    window.workspace.getStartupFile?.().then((startupPath) => {
+      if (startupPath) {
+        console.log('[App] Opening startup PDF file:', startupPath)
+        void openFileByPath(startupPath)
+      }
+    })
+
+    const unsubscribe = window.workspace.onOpenExternalPath?.((filePath) => {
+      console.log('[App] Received external PDF path to open:', filePath)
+      void openFileByPath(filePath)
+    })
+    return () => {
+      unsubscribe?.()
+    }
+  }, [openFileByPath])
 
   // 네이티브 메뉴 이벤트 구독
   useEffect(() => {
@@ -85,6 +128,14 @@ export default function App() {
       setModal('print')
     }
     const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      const isInput =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      if (isInput) return
+
       const isCmdOrCtrl = e.ctrlKey || e.metaKey
 
       // Ctrl + O: 파일 열기
@@ -142,9 +193,10 @@ export default function App() {
     }
   }, [handleMenuEvent, openFile])
 
-  // 문서가 없을 때 드래그&드롭으로 열기
+  // 문서가 없을 때 드래그&드롭으로 열기 (자식 컴포넌트에서 stopPropagation/defaultPrevented 시 무시)
   useEffect(() => {
     const onDrop = async (e: DragEvent) => {
+      if (e.defaultPrevented) return
       e.preventDefault()
       const file = e.dataTransfer?.files[0]
       if (!file || file.type !== 'application/pdf') return
@@ -154,7 +206,9 @@ export default function App() {
       const { meta, dimensions } = await loadPdfFromBytes(bytes, file.name, null)
       useStore.getState().setDocument(meta, dimensions)
     }
-    const onDragOver = (e: DragEvent) => e.preventDefault()
+    const onDragOver = (e: DragEvent) => {
+      if (!e.defaultPrevented) e.preventDefault()
+    }
     window.addEventListener('drop', onDrop)
     window.addEventListener('dragover', onDragOver)
     return () => {
@@ -182,6 +236,12 @@ export default function App() {
       {modal === 'normalize' && <NormalizeModal onClose={() => setModal(null)} />}
       {modal === 'crop' && <CropModal onClose={() => setModal(null)} />}
       {modal === 'print' && <PrintModal onClose={() => setModal(null)} />}
+      {modal === 'watermark' && <WatermarkModal onClose={() => setModal(null)} />}
+      {modal === 'pageNumber' && <PageNumberModal onClose={() => setModal(null)} />}
+      {modal === 'stamp' && <StampModal onClose={() => setModal(null)} />}
+      {modal === 'exportImage' && <ExportImageModal onClose={() => setModal(null)} />}
+      {modal === 'ocr' && <OcrModal onClose={() => setModal(null)} />}
+      {modal === 'metadata' && <MetadataModal onClose={() => setModal(null)} />}
       <ProgressBarModal />
     </div>
   )

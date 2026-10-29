@@ -3,6 +3,15 @@ productName: 더존 PDF 편집기
 directories:
   output: dist
   buildResources: build
+publish:
+  - provider: github
+    owner: bti0497-gif
+    repo: PDF-Workspace
+fileAssociations:
+  - ext: pdf
+    name: PDF Document
+    description: 더존 PDF 편집기 문서
+    role: Editor
 files:
   - out/**/*
   - package.json
@@ -19,7 +28,7 @@ win:
     - nsis
     - dir
     - zip
-  artifactName: ${productName}-${version}-${arch}.${ext}
+  artifactName: Douzone-PDF-Editor-Setup-${version}-${arch}.${ext}
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true

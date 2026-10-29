@@ -5,17 +5,16 @@
  * 1. dragover 이벤트 중 React 상태(setState) 변경 0회
  * 2. requestAnimationFrame 기반 CSS transform 으로 삽입선(Drop Indicator) 추적
  * 3. 캔버스 불변 보존 (순서가 바뀌어도 Canvas를 다시 그리지 않고 DOM 노드만 이동)
- * 4. 외부 PDF 파일 드롭 시 해당 위치에 즉시 페이지 삽입 병합
- * 5. 다중 선택 (Ctrl/Shift 클릭) 및 우클릭 컨텍스트 메뉴
+ * 4. 외부 PDF 파일 드롭 시 해당 위치에 즉시 페이지 순차 삽입 병합
+ * 5. 다중 선택 (Ctrl/Shift/체크박스/러버밴드 마키) 및 다중 페이지 일괄 드래그 이동
  */
 import { useEffect, useRef, useState, memo, useCallback } from 'react'
 import { useStore } from '../lib/store'
 import { getPdfDoc, getOrLoadPdfDoc } from '../hooks/usePdfDocument'
-import { extractSelectedPagesAction } from '../hooks/useMenuActions'
+import { extractSelectedPagesAction, insertBlankPageAt } from '../hooks/useMenuActions'
 import { BookmarkPanel } from './BookmarkPanel'
+import { AnnotationListPanel } from './AnnotationListPanel'
 import type { VirtualPage } from '../core/domain/page'
-
-const THUMB_WIDTH = 156 // 썸네일 기준 폭 (px)
 
 export function ThumbnailPanel() {
   const visible = useStore((s) => s.thumbnailsVisible)
@@ -25,20 +24,43 @@ export function ThumbnailPanel() {
   const currentPage = useStore((s) => s.currentPage)
   const sidebarTab = useStore((s) => s.sidebarTab)
   const bookmarks = useStore((s) => s.bookmarks)
+  const annotations = useStore((s) => s.annotations)
+  const thumbnailSize = useStore((s) => s.thumbnailSize)
+  const sidebarWidth = useStore((s) => s.sidebarWidth)
+  const selectionColor = useStore((s) => s.selectionColor)
 
   const setSidebarTab = useStore((s) => s.setSidebarTab)
+  const setThumbnailSize = useStore((s) => s.setThumbnailSize)
+  const setSidebarWidth = useStore((s) => s.setSidebarWidth)
+  const setSelectionColor = useStore((s) => s.setSelectionColor)
   const selectPage = useStore((s) => s.selectPage)
+  const selectAllPages = useStore((s) => s.selectAllPages)
+  const clearPageSelection = useStore((s) => s.clearPageSelection)
+  const selectPagesByPredicate = useStore((s) => s.selectPagesByPredicate)
   const reorderPages = useStore((s) => s.reorderPages)
+  const reorderMultiplePages = useStore((s) => s.reorderMultiplePages)
   const rotatePages = useStore((s) => s.rotatePages)
   const deletePages = useStore((s) => s.deletePages)
   const duplicatePages = useStore((s) => s.duplicatePages)
   const insertPagesFromDocument = useStore((s) => s.insertPagesFromDocument)
 
   const containerRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
   const indicatorRef = useRef<HTMLDivElement>(null)
   const draggedIndexRef = useRef<number | null>(null)
   const targetDropIndexRef = useRef<number | null>(null)
   const rafIdRef = useRef<number | null>(null)
+
+  const [draggingIndex, setDraggingIndex] = useState<number | null>(null)
+
+  // 러버밴드 마키(Marquee) 영역 선택 상태
+  const [marqueeBox, setMarqueeBox] = useState<{
+    startX: number
+    startY: number
+    currentX: number
+    currentY: number
+  } | null>(null)
+  const isMarqueeActiveRef = useRef(false)
 
   // 우클릭 컨텍스트 메뉴 상태
   const [contextMenu, setContextMenu] = useState<{
@@ -58,55 +80,201 @@ export function ThumbnailPanel() {
     }
   }, [])
 
-  // 드래그 오버 핸들러 (React 상태 변경 없이 RAF로 60fps 인디케이터 추적)
-  const handleDragOver = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault()
-      e.dataTransfer.dropEffect = 'move'
+  // Ctrl + Wheel 썸네일 크기 부드러운 조정 (passive: false 로 기본 브라우저 줌 방지)
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
 
-      const container = containerRef.current
-      const indicator = indicatorRef.current
-      if (!container || !indicator) return
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault()
+        const delta = e.deltaY < 0 ? 16 : -16
+        const cur = useStore.getState().thumbnailSize
+        useStore.getState().setThumbnailSize(cur + delta)
+      }
+    }
 
-      const clientY = e.clientY
-      const containerRect = container.getBoundingClientRect()
-      const scrollY = container.scrollTop
+    container.addEventListener('wheel', onWheel, { passive: false })
+    return () => {
+      container.removeEventListener('wheel', onWheel)
+    }
+  }, [])
 
-      // 자식 thumbnail 요소들 위치 스캔
-      const items = Array.from(
-        container.querySelectorAll<HTMLElement>('.thumbnail')
+  // 사이드바 너비 드래그 조절기 (Resizer) 핸들러
+  const handleResizerMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startWidth = sidebarWidth
+    const onMouseMove = (ev: MouseEvent) => {
+      setSidebarWidth(startWidth + (ev.clientX - startX))
+    }
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }
+
+  // 러버밴드 마키 박스 드래그 선택 시작
+  const handleContainerMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    // 좌클릭만 허용, 썸네일/체크박스/컨텍스트메뉴 클릭 시 마키 시작 방지
+    if (e.button !== 0) return
+    const target = e.target as HTMLElement
+    if (
+      target.closest('.thumbnail') ||
+      target.closest('.thumbnail-controls') ||
+      target.closest('.context-menu') ||
+      target.closest('.thumbnail-panel__resizer')
+    ) {
+      return
+    }
+
+    const container = containerRef.current
+    if (!container) return
+
+    const rect = container.getBoundingClientRect()
+    const startX = e.clientX - rect.left
+    const startY = e.clientY - rect.top + container.scrollTop
+
+    isMarqueeActiveRef.current = true
+    setMarqueeBox({
+      startX,
+      startY,
+      currentX: startX,
+      currentY: startY
+    })
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!isMarqueeActiveRef.current || !containerRef.current) return
+      const cRect = containerRef.current.getBoundingClientRect()
+      const curX = ev.clientX - cRect.left
+      const curY = ev.clientY - cRect.top + containerRef.current.scrollTop
+
+      setMarqueeBox((prev) => (prev ? { ...prev, currentX: curX, currentY: curY } : null))
+
+      // 마키 박스 좌표 계산 (컨테이너 내부 스크롤 기준)
+      const boxLeft = Math.min(startX, curX)
+      const boxRight = Math.max(startX, curX)
+      const boxTop = Math.min(startY, curY)
+      const boxBottom = Math.max(startY, curY)
+
+      const thumbEls = Array.from(
+        containerRef.current.querySelectorAll<HTMLElement>('.thumbnail[data-index]')
       )
-      if (items.length === 0) return
+      const intersecting: number[] = []
 
-      let dropIndex = items.length
-      let indicatorTop = items[items.length - 1].offsetTop + items[items.length - 1].offsetHeight + 4
+      for (const el of thumbEls) {
+        const elTop = el.offsetTop
+        const elBottom = elTop + el.offsetHeight
+        const elLeft = el.offsetLeft
+        const elRight = elLeft + el.offsetWidth
 
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i]
-        const rect = item.getBoundingClientRect()
-        const midY = rect.top + rect.height / 2
-
-        if (clientY < midY) {
-          dropIndex = i
-          indicatorTop = item.offsetTop - 5
-          break
+        // 겹침 검사
+        if (boxLeft <= elRight && boxRight >= elLeft && boxTop <= elBottom && boxBottom >= elTop) {
+          const idx = Number(el.getAttribute('data-index'))
+          if (!isNaN(idx)) intersecting.push(idx)
         }
       }
 
-      targetDropIndexRef.current = dropIndex
+      if (intersecting.length > 0) {
+        selectPagesByPredicate(intersecting)
+      }
+    }
 
-      // RAF로 인디케이터 위치 즉시 갱신 (리렌더링 없음)
-      if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current)
-      rafIdRef.current = requestAnimationFrame(() => {
-        indicator.style.display = 'block'
-        indicator.style.transform = `translateY(${indicatorTop}px)`
-      })
-    },
-    []
-  )
+    const onMouseUp = () => {
+      isMarqueeActiveRef.current = false
+      setMarqueeBox(null)
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }
+
+  // 키보드 단축키 핸들러
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    const isCmdOrCtrl = e.ctrlKey || e.metaKey
+
+    if (isCmdOrCtrl && e.key.toLowerCase() === 'a') {
+      e.preventDefault()
+      selectAllPages()
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      clearPageSelection()
+      return
+    }
+    if (e.key === 'Delete') {
+      e.preventDefault()
+      if (pages.length > selectedPageIndices.length && selectedPageIndices.length > 0) {
+        deletePages(selectedPageIndices)
+      }
+      return
+    }
+    if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+      e.preventDefault()
+      const nextIdx = Math.max(0, currentPage - 1)
+      if (e.shiftKey) {
+        selectPage(nextIdx, 'range')
+      } else {
+        selectPage(nextIdx, 'single')
+      }
+      return
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+      e.preventDefault()
+      const nextIdx = Math.min(pages.length - 1, currentPage + 1)
+      if (e.shiftKey) {
+        selectPage(nextIdx, 'range')
+      } else {
+        selectPage(nextIdx, 'single')
+      }
+      return
+    }
+  }
+
+  // 드래그 오버 핸들러 (React 상태 변경 없이 RAF로 60fps 인디케이터 추적)
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = 'move'
+
+    const container = containerRef.current
+    const indicator = indicatorRef.current
+    if (!container || !indicator) return
+
+    const clientY = e.clientY
+    const items = Array.from(container.querySelectorAll<HTMLElement>('.thumbnail'))
+    if (items.length === 0) return
+
+    let dropIndex = items.length
+    let indicatorTop = items[items.length - 1].offsetTop + items[items.length - 1].offsetHeight + 4
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      const rect = item.getBoundingClientRect()
+      const midY = rect.top + rect.height / 2
+
+      if (clientY < midY) {
+        dropIndex = i
+        indicatorTop = item.offsetTop - 5
+        break
+      }
+    }
+
+    targetDropIndexRef.current = dropIndex
+
+    if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current)
+    rafIdRef.current = requestAnimationFrame(() => {
+      indicator.style.display = 'block'
+      indicator.style.transform = `translateY(${indicatorTop}px)`
+    })
+  }, [])
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
-    // 컨테이너 영역 밖으로 나갈 때 인디케이터 숨김
     if (e.currentTarget === e.target) {
       if (indicatorRef.current) indicatorRef.current.style.display = 'none'
     }
@@ -115,11 +283,12 @@ export function ThumbnailPanel() {
   const handleDrop = useCallback(
     async (e: React.DragEvent) => {
       e.preventDefault()
+      e.stopPropagation() // 상위 윈도우 drop 리스너로 전파 차단
       if (indicatorRef.current) indicatorRef.current.style.display = 'none'
 
       const targetIndex = targetDropIndexRef.current ?? pages.length
 
-      // 1. 외부 PDF 파일 드롭 처리 (원하는 위치에 끼워넣기 병합)
+      // 1. 외부 PDF 파일 드롭 처리 (원하는 위치에 끼워넣기 순차 병합)
       if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
         const setLoadingProgress = useStore.getState().setLoadingProgress
         const totalFiles = e.dataTransfer.files.length
@@ -131,6 +300,7 @@ export function ThumbnailPanel() {
         })
 
         try {
+          let runningInsertIdx = targetIndex
           for (let i = 0; i < totalFiles; i++) {
             const file = e.dataTransfer.files[i]
             if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
@@ -154,13 +324,25 @@ export function ThumbnailPanel() {
               })
 
               const loadedDoc = await getOrLoadPdfDoc(sourceId, bytes)
+
+              let dimensions: { width: number; height: number } | undefined
+              try {
+                const page1 = await loadedDoc.getPage(1)
+                const v1 = page1.getViewport({ scale: 1 })
+                dimensions = { width: v1.width, height: v1.height }
+              } catch {
+                /* fallback */
+              }
+
               insertPagesFromDocument(
                 sourceId,
                 file.name,
                 bytes,
                 loadedDoc.numPages,
-                targetIndex + i
+                runningInsertIdx,
+                dimensions
               )
+              runningInsertIdx += loadedDoc.numPages
             }
           }
           setLoadingProgress({
@@ -178,18 +360,24 @@ export function ThumbnailPanel() {
         return
       }
 
-      // 2. 내부 썸네일 재배열 처리
+      // 2. 내부 썸네일 재배열 처리 (다중 선택된 경우 블록 일괄 이동)
       const fromIndex = draggedIndexRef.current
       if (fromIndex !== null && fromIndex !== targetIndex) {
-        // targetIndex 보정 (뒤로 이동할 때 인덱스 처리)
-        const adjustedTo = fromIndex < targetIndex ? targetIndex - 1 : targetIndex
-        reorderPages(fromIndex, adjustedTo)
+        const isMulti =
+          selectedPageIndices.includes(fromIndex) && selectedPageIndices.length > 1
+        if (isMulti) {
+          reorderMultiplePages(selectedPageIndices, targetIndex)
+        } else {
+          const adjustedTo = fromIndex < targetIndex ? targetIndex - 1 : targetIndex
+          reorderPages(fromIndex, adjustedTo)
+        }
       }
 
       draggedIndexRef.current = null
       targetDropIndexRef.current = null
+      setDraggingIndex(null)
     },
-    [pages.length, insertPagesFromDocument, reorderPages]
+    [pages.length, selectedPageIndices, insertPagesFromDocument, reorderPages, reorderMultiplePages]
   )
 
   const handleContextMenu = (e: React.MouseEvent, index: number) => {
@@ -220,6 +408,7 @@ export function ThumbnailPanel() {
     })
 
     try {
+      let runningInsertIdx = insertIndex
       for (let i = 0; i < total; i++) {
         const p = paths[i]
         const currentPct = Math.round(10 + (i / total) * 75)
@@ -245,6 +434,15 @@ export function ThumbnailPanel() {
 
         const loadedDoc = await getOrLoadPdfDoc(sourceId, bytes)
 
+        let dimensions: { width: number; height: number } | undefined
+        try {
+          const page1 = await loadedDoc.getPage(1)
+          const v1 = page1.getViewport({ scale: 1 })
+          dimensions = { width: v1.width, height: v1.height }
+        } catch {
+          /* fallback */
+        }
+
         setLoadingProgress({
           visible: true,
           percent: currentPct + 20,
@@ -257,8 +455,10 @@ export function ThumbnailPanel() {
           fileName,
           bytes,
           loadedDoc.numPages,
-          insertIndex + i
+          runningInsertIdx,
+          dimensions
         )
+        runningInsertIdx += loadedDoc.numPages
       }
 
       setLoadingProgress({
@@ -279,8 +479,22 @@ export function ThumbnailPanel() {
     return <aside className={`sidebar ${visible ? '' : 'sidebar--hidden'}`} />
   }
 
+  const dragCount =
+    draggingIndex !== null && selectedPageIndices.includes(draggingIndex)
+      ? selectedPageIndices.length
+      : 1
+
   return (
-    <aside className={`sidebar ${visible ? '' : 'sidebar--hidden'}`}>
+    <aside
+      className={`sidebar ${visible ? '' : 'sidebar--hidden'}`}
+      style={
+        {
+          '--sidebar-width': `${sidebarWidth}px`,
+          '--thumb-size': `${thumbnailSize}px`,
+          '--thumb-selected-color': selectionColor
+        } as React.CSSProperties
+      }
+    >
       {/* 탭 헤더: 썸네일 vs 북마크(목차) */}
       <div className="sidebar__tabs">
         <button
@@ -297,17 +511,150 @@ export function ThumbnailPanel() {
         >
           📑 목차 {bookmarks.length > 0 ? `(${bookmarks.length})` : ''}
         </button>
+        <button
+          className={`sidebar__tab ${sidebarTab === 'annotations' ? 'sidebar__tab--active' : ''}`}
+          onClick={() => setSidebarTab('annotations')}
+          title="문서 내 주석 및 마크업 목록"
+        >
+          💬 주석 ({annotations.length})
+        </button>
       </div>
+
+      {/* 썸네일 탭 컨트롤 헤더 바 */}
+      {sidebarTab === 'thumbnails' && (
+        <div className="thumbnail-controls">
+          {/* 1행: 크기 프리셋 & 슬라이더 */}
+          <div className="thumbnail-controls__row">
+            <div className="thumbnail-controls__group">
+              <span className="thumbnail-controls__badge">크기:</span>
+              <button
+                className={`thumbnail-controls__btn ${thumbnailSize <= 120 ? 'thumbnail-controls__btn--active' : ''}`}
+                onClick={() => setThumbnailSize(110)}
+                title="작은 썸네일 (110px)"
+              >
+                소
+              </button>
+              <button
+                className={`thumbnail-controls__btn ${thumbnailSize > 120 && thumbnailSize <= 180 ? 'thumbnail-controls__btn--active' : ''}`}
+                onClick={() => setThumbnailSize(156)}
+                title="중간 썸네일 (156px)"
+              >
+                중
+              </button>
+              <button
+                className={`thumbnail-controls__btn ${thumbnailSize > 180 ? 'thumbnail-controls__btn--active' : ''}`}
+                onClick={() => setThumbnailSize(210)}
+                title="큰 썸네일 (210px)"
+              >
+                대
+              </button>
+            </div>
+            <div className="thumbnail-controls__group">
+              <input
+                type="range"
+                className="thumbnail-controls__slider"
+                min={96}
+                max={260}
+                step={4}
+                value={thumbnailSize}
+                onChange={(e) => setThumbnailSize(Number(e.target.value))}
+                title={`썸네일 폭: ${thumbnailSize}px (Ctrl+휠 조절 가능)`}
+              />
+              <span className="thumbnail-controls__badge">{thumbnailSize}px</span>
+            </div>
+          </div>
+
+          {/* 2행: 선택 퀵 바 */}
+          <div className="thumbnail-controls__row">
+            <div className="thumbnail-controls__group">
+              <button
+                className="thumbnail-controls__btn"
+                onClick={() => selectPagesByPredicate('all')}
+                title="전체 페이지 선택 (Ctrl+A)"
+              >
+                전체
+              </button>
+              <button
+                className="thumbnail-controls__btn"
+                onClick={() => selectPagesByPredicate('even')}
+                title="짝수 페이지 선택 (2, 4, 6...)"
+              >
+                짝수
+              </button>
+              <button
+                className="thumbnail-controls__btn"
+                onClick={() => selectPagesByPredicate('odd')}
+                title="홀수 페이지 선택 (1, 3, 5...)"
+              >
+                홀수
+              </button>
+              <button
+                className="thumbnail-controls__btn"
+                onClick={() => selectPagesByPredicate('invert')}
+                title="선택 반전"
+              >
+                반전
+              </button>
+              <button
+                className="thumbnail-controls__btn"
+                onClick={() => selectPagesByPredicate('none')}
+                title="선택 해제 (Esc)"
+              >
+                해제
+              </button>
+            </div>
+            <span className="thumbnail-controls__badge">
+              선택 {selectedPageIndices.length} / {pages.length}
+            </span>
+          </div>
+
+          {/* 3행: 선택 강조 색상 팔레트 */}
+          <div className="thumbnail-controls__row">
+            <span className="thumbnail-controls__badge">강조색:</span>
+            <div className="thumbnail-controls__swatches">
+              {[
+                { color: '#10b981', label: '에메랄드 그린' },
+                { color: '#f59e0b', label: '앰버 골드' },
+                { color: '#0e6fd6', label: '더존 블루' },
+                { color: '#f43f5e', label: '코랄 레드' },
+                { color: '#8b5cf6', label: '퍼플' }
+              ].map((swatch) => (
+                <button
+                  key={swatch.color}
+                  className={`thumbnail-controls__swatch ${selectionColor === swatch.color ? 'thumbnail-controls__swatch--active' : ''}`}
+                  style={{ backgroundColor: swatch.color }}
+                  onClick={() => setSelectionColor(swatch.color)}
+                  title={swatch.label}
+                />
+              ))}
+              <input
+                type="color"
+                className="thumbnail-controls__color-input"
+                value={selectionColor}
+                onChange={(e) => setSelectionColor(e.target.value)}
+                title="사용자 지정 강조색 선택"
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 사이드바 컨텐츠 */}
       {sidebarTab === 'bookmarks' ? (
         <div className="sidebar__content">
           <BookmarkPanel />
         </div>
+      ) : sidebarTab === 'annotations' ? (
+        <div className="sidebar__content">
+          <AnnotationListPanel />
+        </div>
       ) : (
         <div
           ref={containerRef}
           className="sidebar__content"
+          tabIndex={0}
+          onMouseDown={handleContainerMouseDown}
+          onKeyDown={handleKeyDown}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
@@ -315,33 +662,72 @@ export function ThumbnailPanel() {
           {/* RAF로 제어되는 초경량 드롭 인디케이터 (삽입선) */}
           <div ref={indicatorRef} className="thumbnail-drop-indicator" />
 
-          {pages.map((vPage, index) => {
-            const isSelected = selectedPageIndices.includes(index)
-            const isActive = index === currentPage
+          {/* 러버밴드 마키 박스 */}
+          {marqueeBox && (
+            <div
+              className="thumbnail-marquee"
+              style={{
+                left: `${Math.min(marqueeBox.startX, marqueeBox.currentX)}px`,
+                top: `${Math.min(marqueeBox.startY, marqueeBox.currentY)}px`,
+                width: `${Math.abs(marqueeBox.currentX - marqueeBox.startX)}px`,
+                height: `${Math.abs(marqueeBox.currentY - marqueeBox.startY)}px`
+              }}
+            />
+          )}
 
-            return (
-              <ThumbnailItem
-                key={vPage.id}
-                virtualPage={vPage}
-                index={index}
-                isSelected={isSelected}
-                isActive={isActive}
-                onSelect={(e) => {
-                  if (e.ctrlKey || e.metaKey) selectPage(index, 'toggle')
-                  else if (e.shiftKey) selectPage(index, 'range')
-                  else selectPage(index, 'single')
-                }}
-                onContextMenu={(e) => handleContextMenu(e, index)}
-                onDragStart={(e) => {
-                  draggedIndexRef.current = index
-                  e.dataTransfer.setData('text/plain', String(index))
-                  e.dataTransfer.effectAllowed = 'move'
-                }}
-              />
-            )
-          })}
+          {/* 반응형 다열 CSS 그리드 썸네일 리스트 */}
+          <div ref={listRef} className="thumbnail-panel__list">
+            {pages.map((vPage, index) => {
+              const isSelected = selectedPageIndices.includes(index)
+              const isActive = index === currentPage
+              const isDragging = draggingIndex === index
+
+              return (
+                <ThumbnailItem
+                  key={vPage.id}
+                  virtualPage={vPage}
+                  index={index}
+                  isSelected={isSelected}
+                  isActive={isActive}
+                  isDragging={isDragging}
+                  dragCount={dragCount}
+                  thumbnailSize={thumbnailSize}
+                  onSelect={(e) => {
+                    if (e.ctrlKey || e.metaKey) selectPage(index, 'toggle')
+                    else if (e.shiftKey) selectPage(index, 'range')
+                    else selectPage(index, 'single')
+                  }}
+                  onToggleSelect={(e) => {
+                    e.stopPropagation()
+                    selectPage(index, 'toggle')
+                  }}
+                  onContextMenu={(e) => handleContextMenu(e, index)}
+                  onDragStart={(e) => {
+                    draggedIndexRef.current = index
+                    setDraggingIndex(index)
+                    if (!selectedPageIndices.includes(index)) {
+                      selectPage(index, 'single')
+                    }
+                    e.dataTransfer.setData('text/plain', String(index))
+                    e.dataTransfer.effectAllowed = 'move'
+                  }}
+                  onDragEnd={() => {
+                    draggedIndexRef.current = null
+                    setDraggingIndex(null)
+                  }}
+                />
+              )
+            })}
+          </div>
         </div>
       )}
+
+      {/* 우측 가장자리 너비 조절 리사이저 */}
+      <div
+        className="thumbnail-panel__resizer"
+        onMouseDown={handleResizerMouseDown}
+        title="사이드바 너비 조절"
+      />
 
       {/* 우클릭 컨텍스트 메뉴 */}
       {contextMenu && (
@@ -368,6 +754,15 @@ export function ThumbnailPanel() {
           >
             <span>↶</span> 반시계 방향 90° 회전
           </button>
+          <button
+            className="context-menu__item"
+            onClick={() => {
+              rotatePages(selectedPageIndices, '180')
+              setContextMenu(null)
+            }}
+          >
+            <span>🔄</span> 180° 상하 반전
+          </button>
           <div className="context-menu__divider" />
           <button
             className="context-menu__item"
@@ -386,6 +781,15 @@ export function ThumbnailPanel() {
             }}
           >
             <span>📤</span> 선택한 페이지 내보내기...
+          </button>
+          <button
+            className="context-menu__item"
+            onClick={() => {
+              void insertBlankPageAt(contextMenu.targetIndex + 1)
+              setContextMenu(null)
+            }}
+          >
+            <span>📄</span> 여기에 빈 페이지 삽입
           </button>
           <button
             className="context-menu__item"
@@ -414,7 +818,7 @@ export function ThumbnailPanel() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// 개별 썸네일 아이템 (React.memo 로 리렌더링 차단)
+// 개별 썸네일 아이템 (React.memo 로 불필요한 리렌더링 차단)
 // ─────────────────────────────────────────────────────────────
 
 interface ThumbItemProps {
@@ -422,9 +826,14 @@ interface ThumbItemProps {
   index: number
   isSelected: boolean
   isActive: boolean
+  isDragging: boolean
+  dragCount: number
+  thumbnailSize: number
   onSelect: (e: React.MouseEvent) => void
+  onToggleSelect: (e: React.MouseEvent) => void
   onContextMenu: (e: React.MouseEvent) => void
   onDragStart: (e: React.DragEvent) => void
+  onDragEnd: (e: React.DragEvent) => void
 }
 
 const ThumbnailItem = memo(function ThumbnailItem({
@@ -432,14 +841,20 @@ const ThumbnailItem = memo(function ThumbnailItem({
   index,
   isSelected,
   isActive,
+  isDragging,
+  dragCount,
+  thumbnailSize,
   onSelect,
+  onToggleSelect,
   onContextMenu,
-  onDragStart
+  onDragStart,
+  onDragEnd
 }: ThumbItemProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isVisible, setIsVisible] = useState(false)
   const renderedRotation = useRef<number | null>(null)
+  const renderedSize = useRef<number | null>(null)
   const isMounted = useRef(true)
 
   useEffect(() => {
@@ -470,10 +885,15 @@ const ThumbnailItem = memo(function ThumbnailItem({
     return () => observer.disconnect()
   }, [])
 
-  // 썸네일 렌더링 (화면에 보이고, 회전 변경 시에만 다시 그리기)
+  // 썸네일 렌더링 (화면에 보이고, 회전 또는 썸네일 크기 변경 시에만 다시 그리기)
   useEffect(() => {
     if (!isVisible) return
-    if (renderedRotation.current === virtualPage.rotation) return
+    if (
+      renderedRotation.current === virtualPage.rotation &&
+      renderedSize.current === thumbnailSize
+    ) {
+      return
+    }
     let cancelled = false
 
     const render = async () => {
@@ -486,7 +906,7 @@ const ThumbnailItem = memo(function ThumbnailItem({
         if (cancelled || !isMounted.current) return
 
         const baseViewport = page.getViewport({ scale: 1 })
-        const scale = (THUMB_WIDTH / baseViewport.width) * window.devicePixelRatio
+        const scale = (thumbnailSize / baseViewport.width) * window.devicePixelRatio
         const viewport = page.getViewport({
           scale,
           rotation: virtualPage.rotation
@@ -497,8 +917,8 @@ const ThumbnailItem = memo(function ThumbnailItem({
 
         canvas.width = Math.floor(viewport.width)
         canvas.height = Math.floor(viewport.height)
-        canvas.style.width = `${THUMB_WIDTH}px`
-        canvas.style.height = `${(THUMB_WIDTH / viewport.width) * viewport.height}px`
+        canvas.style.width = `${thumbnailSize}px`
+        canvas.style.height = `${(thumbnailSize / viewport.width) * viewport.height}px`
 
         ctx.fillStyle = '#ffffff'
         ctx.fillRect(0, 0, canvas.width, canvas.height)
@@ -511,6 +931,7 @@ const ThumbnailItem = memo(function ThumbnailItem({
 
         if (!cancelled && isMounted.current) {
           renderedRotation.current = virtualPage.rotation
+          renderedSize.current = thumbnailSize
         }
       } catch (err) {
         if (!cancelled) console.error(`썸네일 ${index + 1} 렌더링 실패:`, err)
@@ -528,18 +949,29 @@ const ThumbnailItem = memo(function ThumbnailItem({
 
     return () => {
       cancelled = true
-      if (typeof win.cancelIdleCallback === 'function' && typeof win.requestIdleCallback === 'function') {
+      if (
+        typeof win.cancelIdleCallback === 'function' &&
+        typeof win.requestIdleCallback === 'function'
+      ) {
         win.cancelIdleCallback(timer)
       } else {
         clearTimeout(timer)
       }
     }
-  }, [isVisible, virtualPage.sourceDocId, virtualPage.sourcePageIndex, virtualPage.rotation, index])
+  }, [
+    isVisible,
+    virtualPage.sourceDocId,
+    virtualPage.sourcePageIndex,
+    virtualPage.rotation,
+    thumbnailSize,
+    index
+  ])
 
   const classNames = [
     'thumbnail',
     isActive ? 'thumbnail--active' : '',
-    isSelected ? 'thumbnail--selected' : ''
+    isSelected ? 'thumbnail--selected' : '',
+    isDragging ? 'thumbnail--dragging' : ''
   ]
     .filter(Boolean)
     .join(' ')
@@ -548,25 +980,57 @@ const ThumbnailItem = memo(function ThumbnailItem({
     <div
       ref={containerRef}
       className={classNames}
+      data-index={index}
       draggable
       onClick={onSelect}
       onContextMenu={onContextMenu}
       onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      style={{ width: `${thumbnailSize}px` }}
     >
+      {/* 썸네일 좌상단 선택 체크박스 */}
+      <div
+        className={`thumbnail__checkbox ${isSelected ? 'thumbnail__checkbox--checked' : ''}`}
+        onClick={onToggleSelect}
+        title="선택 토글"
+      >
+        {isSelected ? '✓' : ''}
+      </div>
+
       {isVisible ? (
         <canvas ref={canvasRef} className="thumbnail__canvas" />
       ) : (
-        <div className="thumbnail__placeholder">
+        <div className="thumbnail__placeholder" style={{ width: `${thumbnailSize}px` }}>
           <span className="thumbnail__placeholder-icon">📄</span>
           <span className="thumbnail__placeholder-text">대기 중...</span>
         </div>
       )}
+      {/* 상태 배지 목록 */}
+      <div className="thumbnail__badges">
+        {virtualPage.cropMargins && (
+          <span className="thumbnail__badge" title="여백 자르기 적용됨">✂</span>
+        )}
+        {virtualPage.normalizedConfig && (
+          <span className="thumbnail__badge" title="조판 규격화 적용됨">⛶</span>
+        )}
+        {virtualPage.watermarkConfig && (
+          <span className="thumbnail__badge" title={`워터마크: ${virtualPage.watermarkConfig.text}`}>💧</span>
+        )}
+        {virtualPage.pageNumberConfig && (
+          <span className="thumbnail__badge" title={`페이지 번호: ${virtualPage.pageNumberConfig.text}`}>🔢</span>
+        )}
+      </div>
+
       <span className="thumbnail__label">{index + 1}</span>
       <span
         className={`thumbnail__rotation ${virtualPage.rotation % 360 !== 0 ? 'thumbnail__rotation--visible' : ''}`}
       >
         {virtualPage.rotation}°
       </span>
+
+      {isDragging && dragCount > 1 && (
+        <div className="thumbnail__drag-badge">{dragCount}개 이동 중</div>
+      )}
     </div>
   )
 })

@@ -15,10 +15,12 @@
   },
   "dependencies": {
     "@pdf-lib/fontkit": "^1.1.1",
+    "electron-updater": "^6.8.11",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^4.10.38",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "tesseract.js": "^7.0.0",
     "zustand": "^4.5.7"
   },
   "devDependencies": {
