@@ -1,5 +1,11 @@
 # PDF Workspace agent handoff
 
+## Active direction: fresh .NET foundation
+
+The user chose a genuinely fresh .NET/WPF application, not an incremental Electron port. Start in `dotnet-next/README.md` and `dotnet-next/AGENTS.md`. Preserve the legacy baseline `85cff9d`; legacy source is reference-only. Add old features only when explicitly selected and verified. The new foundation lives on `next/dotnet-foundation`. No installer, default-app changes, SDK installation, release or automatic migration is implied.
+
+The TypeScript/Electron and release guidance below applies to the preserved legacy application, NOT new code under `dotnet-next/`.
+
 ## Scope and source hygiene
 
 - Keep application changes in `src/` as TypeScript/React code. Keep Electron process changes in `electron/` only when required by the desktop boundary.

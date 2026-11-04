@@ -1,0 +1,130 @@
+<Window x:Class="Workspace.Shell.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:p="clr-namespace:Workspace.Shell.Presentation" Title="더존 PDF 개발앱 · UI/UX 검증용" Width="1280" Height="820" MinWidth="640" MinHeight="480" FontFamily="Malgun Gothic" FontSize="12" Background="#F1F2F4">
+ <Window.Resources>
+  <BooleanToVisibilityConverter x:Key="BoolVisibility"/>
+  <Style TargetType="Button"><Setter Property="Padding" Value="10,5"/><Setter Property="Margin" Value="2"/><Setter Property="MinHeight" Value="27"/><Setter Property="Background" Value="#FAFAFA"/><Setter Property="BorderBrush" Value="#C9CDD2"/><Setter Property="Foreground" Value="#30343A"/><Setter Property="Cursor" Value="Hand"/><Setter Property="ToolTipService.ShowOnDisabled" Value="True"/></Style>
+  <Style x:Key="TabButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Setter Property="MinWidth" Value="55"/><Setter Property="Padding" Value="12,5"/><Setter Property="Margin" Value="0"/><Setter Property="BorderThickness" Value="0"/><Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="White"/><Style.Triggers><MultiDataTrigger><MultiDataTrigger.Conditions><Condition Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="True"/><Condition Binding="{Binding RibbonVisible}" Value="True"/></MultiDataTrigger.Conditions><Setter Property="Background" Value="#F6F6F6"/><Setter Property="Foreground" Value="#9C472E"/></MultiDataTrigger></Style.Triggers></Style>
+  <Style x:Key="QuickButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Setter Property="MinWidth" Value="30"/><Setter Property="MinHeight" Value="24"/><Setter Property="Padding" Value="6,2"/><Setter Property="Margin" Value="1,0"/><Setter Property="Background" Value="Transparent"/><Setter Property="BorderThickness" Value="0"/></Style>
+  <Style x:Key="RailButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Setter Property="Width" Value="34"/><Setter Property="Height" Value="34"/><Setter Property="Padding" Value="6"/><Setter Property="Margin" Value="2,3"/><Setter Property="BorderThickness" Value="0"/><Setter Property="Background" Value="Transparent"/></Style>
+  <Style x:Key="MutedText" TargetType="TextBlock"><Setter Property="Foreground" Value="#69747D"/><Setter Property="TextWrapping" Value="Wrap"/></Style>
+  <Style x:Key="GroupBorder" TargetType="Border"><Setter Property="BorderBrush" Value="#D1D3D7"/><Setter Property="BorderThickness" Value="0,0,1,0"/><Setter Property="Margin" Value="0,0,7,4"/><Setter Property="Padding" Value="6,0,12,0"/></Style>
+  <Style x:Key="GroupCaption" TargetType="TextBlock"><Setter Property="TextAlignment" Value="Center"/><Setter Property="Foreground" Value="#6A6D72"/><Setter Property="FontSize" Value="11"/><Setter Property="Margin" Value="0,5,0,0"/></Style>
+  <Style x:Key="HeaderIconButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+   <Setter Property="Width" Value="30"/><Setter Property="Height" Value="28"/><Setter Property="MinHeight" Value="28"/><Setter Property="Margin" Value="1,0"/><Setter Property="Padding" Value="6"/><Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="White"/><Setter Property="BorderThickness" Value="0"/><Setter Property="ToolTipService.ShowOnDisabled" Value="True"/><Setter Property="ToolTipService.InitialShowDelay" Value="350"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="IconChrome" Background="{TemplateBinding Background}" BorderBrush="Transparent" BorderThickness="1" CornerRadius="3" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="IconChrome" Property="Background" Value="#26FFFFFF"/></Trigger><Trigger Property="IsPressed" Value="True"><Setter TargetName="IconChrome" Property="Background" Value="#44FFFFFF"/></Trigger><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="IconChrome" Property="BorderBrush" Value="White"/></Trigger><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+  </Style>
+ </Window.Resources>
+ <Window.InputBindings><KeyBinding Key="F1" Modifiers="Control" Command="{Binding ToggleRibbon}"/><KeyBinding Key="F4" Command="{Binding ToggleSidebar}"/><KeyBinding Key="Home" Modifiers="Control" Command="{Binding Home}"/><KeyBinding Key="W" Modifiers="Control" Command="{Binding CloseDocument}"/><KeyBinding Key="O" Modifiers="Control" Command="{Binding OpenPreview}"/><KeyBinding Key="D0" Modifiers="Control" Command="{Binding FitPage}"/><KeyBinding Key="D2" Modifiers="Control" Command="{Binding FitWidth}"/><KeyBinding Key="Add" Modifiers="Control" Command="{Binding ZoomIn}"/><KeyBinding Key="Subtract" Modifiers="Control" Command="{Binding ZoomOut}"/><KeyBinding Key="OemPlus" Modifiers="Control" Command="{Binding ZoomIn}"/><KeyBinding Key="OemPlus" Modifiers="Control+Shift" Command="{Binding ZoomIn}"/><KeyBinding Key="OemMinus" Modifiers="Control" Command="{Binding ZoomOut}"/><KeyBinding Key="Right" Modifiers="Alt" Command="{Binding NextPage}"/><KeyBinding Key="Left" Modifiers="Alt" Command="{Binding PreviousPage}"/><KeyBinding Key="Z" Modifiers="Control" Command="{Binding Undo}"/><KeyBinding Key="Y" Modifiers="Control" Command="{Binding Redo}"/><KeyBinding Key="Z" Modifiers="Control+Shift" Command="{Binding Redo}"/></Window.InputBindings>
+ <Grid x:Name="ShellRoot" Background="#F1F2F4">
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+  <Border Grid.Row="1" Background="#C45C38" Padding="5,0"><DockPanel x:Name="HeaderBar">
+   <Button DockPanel.Dock="Right" x:Name="RibbonToggle" Command="{Binding ToggleRibbon}" Style="{StaticResource HeaderIconButton}" AutomationProperties.Name="리본 접기/펼치기" ToolTip="리본 접기/펼치기 (Ctrl+F1)"><Path Width="14" Height="12" Stretch="Uniform" Stroke="White" StrokeThickness="1.8"><Path.Style><Style TargetType="Path"><Setter Property="Data" Value="M2,3 L8,9 14,3"/><Style.Triggers><DataTrigger Binding="{Binding RibbonVisible}" Value="True"><Setter Property="Data" Value="M2,9 L8,3 14,9"/></DataTrigger></Style.Triggers></Style></Path.Style></Path></Button>
+   <StackPanel DockPanel.Dock="Right" x:Name="QuickAccessBar" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,4,0">
+    <Button x:Name="QuickHomeButton" Command="{Binding Home}" Style="{StaticResource HeaderIconButton}" AutomationProperties.Name="시작 화면" ToolTip="시작 화면 (Ctrl+Home)"><Path Data="M2,11 L12,2 22,11 M5,9 L5,22 10,22 10,15 14,15 14,22 19,22 19,9" Width="17" Height="17" Stretch="Uniform" Stroke="White" StrokeThickness="1.7"/></Button>
+    <Button x:Name="QuickOpenButton" Command="{Binding OpenPreview}" Style="{StaticResource HeaderIconButton}" AutomationProperties.Name="샘플 문서 열기" ToolTip="샘플 문서 열기 (Ctrl+O)&#x0a;현재는 내장 샘플만 열립니다."><Path Data="{x:Static p:RibbonLayout.Folder}" Width="17" Height="17" Stretch="Uniform" Stroke="White" StrokeThickness="2"/></Button>
+    <Button x:Name="QuickSaveButton" IsEnabled="False" Style="{StaticResource HeaderIconButton}" AutomationProperties.Name="저장" ToolTip="저장 (예정: Ctrl+S)&#x0a;PDF 저장 기능은 아직 연결되지 않았습니다."><Path Data="M2,2 L18,2 22,6 22,22 2,22 Z M7,2 L7,9 17,9 17,2 M6,22 L6,14 18,14 18,22" Width="17" Height="17" Stretch="Uniform" Stroke="White" StrokeThickness="1.7"/></Button>
+    <Button x:Name="QuickPrintButton" IsEnabled="False" Style="{StaticResource HeaderIconButton}" AutomationProperties.Name="인쇄" ToolTip="인쇄 (예정: Ctrl+P)&#x0a;PDF 인쇄 기능은 아직 연결되지 않았습니다."><Path Data="M6,8 L6,2 18,2 18,8 M6,18 L2,18 2,8 22,8 22,18 18,18 M6,14 L18,14 18,23 6,23 Z M17,11 L19,11" Width="17" Height="17" Stretch="Uniform" Stroke="White" StrokeThickness="1.7"/></Button>
+    <Button x:Name="QuickUndoButton" Command="{Binding Undo}" Style="{StaticResource HeaderIconButton}" AutomationProperties.Name="실행 취소" ToolTip="{Binding UndoToolTip}"><Path Data="M9,3 L3,9 9,15 M3,9 L15,9 C24,9 24,22 15,22" Width="17" Height="17" Stretch="Uniform" Stroke="White" StrokeThickness="1.7"/></Button>
+    <Button x:Name="QuickRedoButton" Command="{Binding Redo}" Style="{StaticResource HeaderIconButton}" AutomationProperties.Name="다시 실행" ToolTip="{Binding RedoToolTip}"><Path Data="M15,3 L21,9 15,15 M21,9 L9,9 C0,9 0,22 9,22" Width="17" Height="17" Stretch="Uniform" Stroke="White" StrokeThickness="1.7"/></Button>
+   </StackPanel>
+   <Menu DockPanel.Dock="Right" x:Name="QuickAccessOverflow" Visibility="Collapsed" Background="Transparent" VerticalAlignment="Center" Margin="8,0,4,0">
+    <Menu.Resources><Style TargetType="MenuItem"><Setter Property="Foreground" Value="#30343A"/></Style></Menu.Resources>
+    <MenuItem x:Name="QuickAccessOverflowMenu" Foreground="White" Padding="8,5" AutomationProperties.Name="빠른 실행 도구" ToolTip="빠른 실행 도구"><MenuItem.Header><Path Data="M3,8 A1,1 0 1 1 1,8 A1,1 0 1 1 3,8 M9,8 A1,1 0 1 1 7,8 A1,1 0 1 1 9,8 M15,8 A1,1 0 1 1 13,8 A1,1 0 1 1 15,8" Width="16" Height="4" Stretch="Uniform" Fill="White"/></MenuItem.Header>
+     <MenuItem Header="시작 화면" Command="{Binding Home}" InputGestureText="Ctrl+Home"/>
+     <MenuItem Header="샘플 열기" Command="{Binding OpenPreview}" InputGestureText="Ctrl+O"/>
+     <Separator/>
+     <MenuItem Header="저장 · 미연결" IsEnabled="False"/>
+     <MenuItem Header="인쇄 · 미연결" IsEnabled="False"/>
+     <MenuItem Header="실행 취소" Command="{Binding Undo}" InputGestureText="Ctrl+Z"/><MenuItem Header="다시 실행" Command="{Binding Redo}" InputGestureText="Ctrl+Y"/>
+    </MenuItem>
+   </Menu>
+   <WrapPanel x:Name="TopTabs">
+    <Button x:Name="FileTabButton" Content="파일" Command="{Binding FileTab}" Tag="{Binding IsFileTab}" Style="{StaticResource TabButton}"/>
+    <Button x:Name="HomeTabButton" Content="홈" Command="{Binding HomeTab}" Tag="{Binding IsHomeTab}" Style="{StaticResource TabButton}"/>
+    <Button x:Name="BasicTabButton" Content="기본" Command="{Binding BasicTab}" Tag="{Binding IsBasicTab}" Style="{StaticResource TabButton}"/>
+    <Button x:Name="AnnotationTabButton" Content="주석" Command="{Binding AnnotationTab}" Tag="{Binding IsAnnotationTab}" Style="{StaticResource TabButton}"/>
+    <Button x:Name="DocumentTabButton" Content="문서" Command="{Binding DocumentTab}" Tag="{Binding IsDocumentTab}" Style="{StaticResource TabButton}"/>
+    <Button x:Name="ViewTabButton" Content="보기" Command="{Binding ViewTab}" Tag="{Binding IsViewTab}" Style="{StaticResource TabButton}"/>
+    <Button x:Name="ToolsTabButton" Content="도움말" Command="{Binding ToolsTab}" Tag="{Binding IsToolsTab}" Style="{StaticResource TabButton}"/>
+   </WrapPanel>
+  </DockPanel></Border>
+  <Border Grid.Row="2" x:Name="RibbonPanel" Visibility="{Binding RibbonVisible,Converter={StaticResource BoolVisibility}}" Background="#F6F6F6" BorderBrush="#C9CDD2" BorderThickness="0,0,0,1">
+   <ScrollViewer x:Name="RibbonScroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" MaxHeight="174" Padding="6,7,6,5"><Grid>
+    <ItemsControl x:Name="PdfRibbonGroups" ItemsSource="{Binding PreviewGroups}" Visibility="{Binding IsPreviewTab,Converter={StaticResource BoolVisibility}}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel><ItemsControl.ItemTemplate><DataTemplate>
+     <Border Style="{StaticResource GroupBorder}"><StackPanel><ItemsControl ItemsSource="{Binding Tools}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel><ItemsControl.ItemTemplate><DataTemplate>
+      <Button x:Name="UnavailablePdfTool" Command="{Binding Command}" ToolTip="{Binding Availability}" Width="78" Height="70" Padding="4" BorderThickness="0" Background="Transparent"><Button.Style><Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Style.Triggers><DataTrigger Binding="{Binding Command}" Value="{x:Null}"><Setter Property="IsEnabled" Value="False"/></DataTrigger><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.55"/></Trigger></Style.Triggers></Style></Button.Style><StackPanel><Path Data="{Binding Icon}" Width="28" Height="30" Stretch="Uniform" Stroke="#526D88" StrokeThickness="1.8" Margin="0,0,0,5"/><TextBlock Text="{Binding Caption}" TextAlignment="Center" TextWrapping="Wrap" FontSize="12" Foreground="#30343A"/></StackPanel></Button>
+     </DataTemplate></ItemsControl.ItemTemplate></ItemsControl><TextBlock Text="{Binding Name}" Style="{StaticResource GroupCaption}"/></StackPanel></Border>
+    </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+    <WrapPanel Visibility="{Binding IsFileTab,Converter={StaticResource BoolVisibility}}">
+     <Border Style="{StaticResource GroupBorder}"><StackPanel><WrapPanel><Button Content="샘플 열기" Command="{Binding OpenPreview}" ToolTip="UI 검증용 내장 샘플 (Ctrl+O)" Width="80" Height="65"/><Button Content="저장" IsEnabled="False" ToolTip="PDF 모듈 미연결" Width="70" Height="65"/><Button Content="인쇄" IsEnabled="False" ToolTip="PDF 모듈 미연결" Width="70" Height="65"/></WrapPanel><TextBlock Text="파일" Style="{StaticResource GroupCaption}"/></StackPanel></Border>
+     <Border Style="{StaticResource GroupBorder}"><StackPanel><WrapPanel><Button Content="시작 화면" Command="{Binding Home}" Height="65"/><Button Content="앱 종료" Click="ExitApp" IsEnabled="{Binding IsIdle}" Height="65"/></WrapPanel><TextBlock Text="작업 공간" Style="{StaticResource GroupCaption}"/></StackPanel></Border>
+    </WrapPanel>
+    <WrapPanel Visibility="{Binding IsViewTab,Converter={StaticResource BoolVisibility}}">
+     <Border Style="{StaticResource GroupBorder}"><StackPanel><WrapPanel><Button Content="페이지 맞춤" Command="{Binding FitPage}" ToolTip="샘플 페이지 맞춤 (Ctrl+0)" Height="65"/><Button Content="너비 맞춤" Command="{Binding FitWidth}" ToolTip="샘플 너비 맞춤 (Ctrl+2)" Height="65"/></WrapPanel><TextBlock Text="확대/축소" Style="{StaticResource GroupCaption}"/></StackPanel></Border>
+     <Border Style="{StaticResource GroupBorder}"><StackPanel><WrapPanel><Button Content="단일 페이지" Command="{Binding SinglePage}" ToolTip="샘플 단일 페이지" Height="65"/><Button Content="연속 보기" Command="{Binding ContinuousPages}" ToolTip="샘플 연속 스크롤" Height="65"/></WrapPanel><TextBlock Text="페이지 보기" Style="{StaticResource GroupCaption}"/></StackPanel></Border>
+     <Border Style="{StaticResource GroupBorder}"><StackPanel><WrapPanel><Button Content="축소판" Command="{Binding Thumbnails}" Height="65"/><Button Content="책갈피" Command="{Binding Bookmarks}" Height="65"/><Button Content="패널 표시" Command="{Binding ToggleSidebar}" ToolTip="F4" Height="65"/><Button Content="배치 초기화" Command="{Binding ResetLayout}" Height="65"/></WrapPanel><TextBlock Text="작업 영역" Style="{StaticResource GroupCaption}"/></StackPanel></Border>
+    </WrapPanel>
+    <WrapPanel Visibility="{Binding IsToolsTab,Converter={StaticResource BoolVisibility}}">
+     <Border Style="{StaticResource GroupBorder}"><StackPanel><ItemsControl x:Name="ModuleCommandItems" ItemsSource="{Binding ModuleCommands}"><ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel><ItemsControl.ItemTemplate><DataTemplate><Button Content="{Binding Caption}" Command="{Binding Run}" ToolTip="{Binding Id}" Height="65"/></DataTemplate></ItemsControl.ItemTemplate></ItemsControl><TextBlock Text="개발 진단" Style="{StaticResource GroupCaption}"/></StackPanel></Border>
+     <Border Style="{StaticResource GroupBorder}"><StackPanel><WrapPanel><Button Content="조작 안내" Click="ShowInteractionHelp" Height="65"/><Button Content="모듈 정보" Command="{Binding ShowModules}" Height="65"/><Button Content="실행 기록" Command="{Binding ShowActivity}" Height="65"/></WrapPanel><TextBlock Text="앱 정보" Style="{StaticResource GroupCaption}"/></StackPanel></Border>
+    </WrapPanel>
+   </Grid></ScrollViewer>
+  </Border>
+  <Border Grid.Row="3" Background="#FFF9DE" BorderBrush="#DFD8BB" BorderThickness="0,0,0,1" Padding="9,5"><DockPanel><TextBlock DockPanel.Dock="Right" x:Name="ScreenTitleText" Text="{Binding ScreenTitle}" Foreground="#766D4C" Margin="12,0,0,0" MaxWidth="160" TextTrimming="CharacterEllipsis"/><TextBlock Text="UI/UX 검증용 · 샘플 페이지 우클릭으로 관리, Ctrl+Z/Y로 복구. 실제 PDF 입출력은 미연결입니다." Foreground="#756D52" TextWrapping="Wrap"/></DockPanel></Border>
+  <ContentControl Grid.Row="4" Grid.RowSpan="2" x:Name="PreviewHost" Content="{Binding Preview}" Visibility="{Binding PreviewActive,Converter={StaticResource BoolVisibility}}" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
+  <Grid Grid.Row="4" Visibility="{Binding IsStandardWorkspace,Converter={StaticResource BoolVisibility}}"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+   <Border Grid.Column="0" x:Name="NavigationRail" Visibility="{Binding ShowNavigation,Converter={StaticResource BoolVisibility}}" Width="39" Background="#ECEEF0" BorderBrush="#C7CBCF" BorderThickness="0,0,1,0">
+    <ScrollViewer x:Name="RailViewport" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled" ToolTip="탐색 도구 · 작은 창에서는 마우스 휠로 이동"><StackPanel>
+     <Button Style="{StaticResource RailButton}" IsEnabled="False" ToolTip="선택 도구 · PDF 미연결"><Path Data="{x:Static p:RibbonLayout.Select}" Stroke="#75808B" StrokeThickness="2" Stretch="Uniform"/></Button>
+     <Button Style="{StaticResource RailButton}" IsEnabled="False" ToolTip="책갈피 · PDF 미연결"><Path Data="M7,3 L25,3 25,31 16,24 7,31 Z" Stroke="#8A77A5" StrokeThickness="2" Stretch="Uniform"/></Button>
+     <Button Style="{StaticResource RailButton}" IsEnabled="False" ToolTip="페이지 축소판 · PDF 미연결"><Path Data="M3,3 L14,3 14,14 3,14 Z M20,3 L31,3 31,14 20,14 Z M3,20 L14,20 14,31 3,31 Z M20,20 L31,20 31,31 20,31 Z" Stroke="#4B948D" StrokeThickness="2" Stretch="Uniform"/></Button>
+     <Button Style="{StaticResource RailButton}" IsEnabled="False" ToolTip="주석 · PDF 미연결"><Path Data="{x:Static p:RibbonLayout.Comment}" Stroke="#9179A4" StrokeThickness="2" Stretch="Uniform"/></Button>
+     <Separator Margin="4,8"/>
+     <Button Content="모듈" FontSize="10" Padding="0" Style="{StaticResource RailButton}" Command="{Binding ShowModules}" ToolTip="개발용 모듈 정보"/>
+     <Button Content="기록" FontSize="10" Padding="0" Style="{StaticResource RailButton}" Command="{Binding ShowActivity}" ToolTip="실제 명령 실행 기록"/>
+    </StackPanel></ScrollViewer>
+   </Border>
+  <Grid Grid.Column="1" x:Name="BodyGrid">
+   <Grid.ColumnDefinitions><ColumnDefinition x:Name="SidebarColumn" Width="0"/><ColumnDefinition x:Name="SplitterColumn" Width="0"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+   <Border Grid.Column="0" x:Name="SidebarPanel" Background="White" Visibility="{Binding SidebarVisible,Converter={StaticResource BoolVisibility}}" BorderBrush="#D9E0E8" BorderThickness="0,0,1,0">
+    <DockPanel LastChildFill="True">
+     <WrapPanel DockPanel.Dock="Top" Margin="10,10,4,4"><Button Content="모듈" Command="{Binding ShowModules}" Padding="10,5"/><Button Content="기록" Command="{Binding ShowActivity}" Padding="10,5"/><Button Content="접기" Command="{Binding ToggleSidebar}" Padding="10,5"/></WrapPanel>
+     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="14,8,14,14"><Grid>
+      <StackPanel Visibility="{Binding IsModulesPanel,Converter={StaticResource BoolVisibility}}">
+       <TextBlock Text="{Binding ModuleSummary}" FontWeight="SemiBold" Margin="0,0,0,12"/>
+       <TextBlock Text="기능 모듈이 없습니다. 작업 화면만 사용할 수 있습니다." Foreground="#64758A" TextWrapping="Wrap" Margin="0,0,0,12"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding HasModules}" Value="False"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
+       <ItemsControl ItemsSource="{Binding Modules}"><ItemsControl.ItemTemplate><DataTemplate><StackPanel Margin="0,0,0,14"><Button Content="{Binding Name}" Command="{Binding Open}" HorizontalContentAlignment="Left" Margin="0,0,0,4"/><TextBlock Text="{Binding Details}" FontSize="11" Style="{StaticResource MutedText}"/></StackPanel></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+       <ItemsControl ItemsSource="{Binding LoadErrors}" Visibility="{Binding HasLoadErrors,Converter={StaticResource BoolVisibility}}"><ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" Foreground="#A03131" Margin="0,6"/></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+       <TextBlock Text="모듈은 앱 시작 시 연결됩니다. 실행 중 DLL 교체와 자동 패치는 아직 지원하지 않습니다." Style="{StaticResource MutedText}" FontSize="12" Margin="0,14,0,0"/>
+      </StackPanel>
+      <StackPanel Visibility="{Binding IsActivityPanel,Converter={StaticResource BoolVisibility}}">
+       <TextBlock Text="이번 실행의 명령 기록" FontWeight="SemiBold" Margin="0,0,0,10"/>
+       <Button Content="기록 지우기" Command="{Binding ClearActivity}" HorizontalAlignment="Left"/>
+       <TextBlock Text="명령 결과를 최대 100건 표시합니다. 앱을 종료하면 지워집니다." Style="{StaticResource MutedText}" FontSize="12" Margin="0,0,0,14"/>
+       <ItemsControl x:Name="ActivityItems" ItemsSource="{Binding Activity}"><ItemsControl.ItemTemplate><DataTemplate><Border BorderBrush="#E1E7EE" BorderThickness="0,0,0,1" Padding="0,8"><StackPanel><TextBlock Text="{Binding Time}" FontSize="11" Style="{StaticResource MutedText}"/><TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,3"/><TextBlock Text="{Binding Result}" TextWrapping="Wrap" FontSize="12"/></StackPanel></Border></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+      </StackPanel>
+     </Grid></ScrollViewer>
+    </DockPanel>
+   </Border>
+   <GridSplitter Grid.Column="1" x:Name="PanelSplitter" Width="5" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" Background="#E4E9F0" Visibility="{Binding SidebarVisible,Converter={StaticResource BoolVisibility}}" DragCompleted="PanelResizeCompleted" ToolTip="드래그하여 패널 폭 조절"/>
+   <Grid Grid.Column="2" x:Name="WorkAreaGrid" ClipToBounds="True">
+    <p:HomeView x:Name="HomeScreen" Visibility="{Binding IsHome,Converter={StaticResource BoolVisibility}}"/>
+    <ScrollViewer x:Name="ModuleViewport" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" VerticalContentAlignment="Center" Visibility="{Binding HasActiveView,Converter={StaticResource BoolVisibility}}">
+     <ContentControl x:Name="WorkspaceArea" Content="{Binding ActiveView}" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"/>
+    </ScrollViewer>
+   </Grid>
+  </Grid>
+  </Grid>
+  <Border Grid.Row="5" Visibility="{Binding IsStandardWorkspace,Converter={StaticResource BoolVisibility}}" Background="#E9EBED" BorderBrush="#CACDD1" BorderThickness="0,1,0,0" Padding="4,2">
+   <WrapPanel x:Name="PageViewBar" HorizontalAlignment="Center">
+    <Button Content="회전" IsEnabled="False" ToolTip="보기 회전 · PDF 미연결" Style="{StaticResource QuickButton}"/><Button Content="이전 보기" IsEnabled="False" ToolTip="PDF 미연결" Style="{StaticResource QuickButton}"/>
+    <Button Content="단일" IsEnabled="False" ToolTip="PDF 미연결" Style="{StaticResource QuickButton}"/><Button Content="연속" IsEnabled="False" ToolTip="PDF 미연결" Style="{StaticResource QuickButton}"/>
+    <Button Content="|◁" IsEnabled="False" ToolTip="첫 페이지 · PDF 미연결" Style="{StaticResource QuickButton}"/><Button Content="◁" IsEnabled="False" ToolTip="이전 페이지 · PDF 미연결" Style="{StaticResource QuickButton}"/>
+    <TextBlock Text="– / –" MinWidth="65" TextAlignment="Center" VerticalAlignment="Center" Foreground="#81878C"/>
+    <Button Content="▷" IsEnabled="False" ToolTip="다음 페이지 · PDF 미연결" Style="{StaticResource QuickButton}"/><Button Content="▷|" IsEnabled="False" ToolTip="마지막 페이지 · PDF 미연결" Style="{StaticResource QuickButton}"/>
+    <Button Content="맞춤" IsEnabled="False" ToolTip="페이지 맞춤 · PDF 미연결" Style="{StaticResource QuickButton}"/><Button Content="너비" IsEnabled="False" ToolTip="너비 맞춤 · PDF 미연결" Style="{StaticResource QuickButton}"/>
+    <Button Content="−" IsEnabled="False" ToolTip="축소 · PDF 미연결" Style="{StaticResource QuickButton}"/><TextBlock Text="배율 –" MinWidth="70" TextAlignment="Center" VerticalAlignment="Center" Foreground="#81878C"/><Button Content="+" IsEnabled="False" ToolTip="확대 · PDF 미연결" Style="{StaticResource QuickButton}"/>
+   </WrapPanel>
+  </Border>
+  <Border Grid.Row="6" BorderBrush="#D5D8DC" BorderThickness="0,1,0,0" Background="#F9F9F9" Padding="8,5"><DockPanel><TextBlock DockPanel.Dock="Right" Text="독립 구현 · UI 단계" FontSize="11" Foreground="#83878C" Margin="14,0,0,0" VerticalAlignment="Center"/><TextBlock x:Name="StatusText" Text="{Binding Status}" Foreground="#616973" TextWrapping="Wrap" FontSize="11" MaxHeight="42" VerticalAlignment="Center" ToolTip="{Binding Status}"/></DockPanel></Border>
+ </Grid>
+</Window>

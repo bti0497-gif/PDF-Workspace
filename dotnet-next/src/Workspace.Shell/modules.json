@@ -1,0 +1,12 @@
+{
+  "SchemaVersion": 1,
+  "Modules": [
+    {
+      "Id": "foundation",
+      "Version": "0.1.0",
+      "ApiVersion": 1,
+      "Assembly": "Workspace.FoundationModule.dll",
+      "Type": "Workspace.FoundationModule.FoundationModule"
+    }
+  ]
+}

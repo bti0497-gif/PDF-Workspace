@@ -1,0 +1,8 @@
+<UserControl x:Class="Workspace.FoundationModule.FoundationView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+ <StackPanel MaxWidth="560" Margin="28" VerticalAlignment="Center" HorizontalAlignment="Center">
+  <TextBlock Text="모듈 연결 확인" FontSize="24" FontWeight="SemiBold" />
+  <TextBlock Margin="0,16,0,20" TextWrapping="Wrap" Text="이 화면은 별도 DLL에 있습니다. 버튼은 메인 화면과 같은 명령 실행부를 호출합니다. PDF 기능은 아직 포함하지 않았습니다." />
+  <Button x:Name="RunButton" Content="연결 검사 실행" HorizontalAlignment="Left" Padding="20,10" Click="RunCheck" />
+  <TextBlock x:Name="ResultText" Margin="0,20,0,0" TextWrapping="Wrap" Text="검사를 실행하지 않았습니다." />
+ </StackPanel>
+</UserControl>
