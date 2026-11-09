@@ -21,13 +21,21 @@ internal static partial class ShellSmokeChecks
         Directory.CreateDirectory(output);
         foreach(var file in new[]{"smoke.json","failure.txt","foundation-home.png","workspace-module.png"}) File.Delete(Path.Combine(output,file));
         var checks=new List<string>();
-        void Check(bool value,string name){if(!value)throw new InvalidOperationException(name);checks.Add(name);}
+        void Check(bool value,string name){if(!value)throw new InvalidOperationException(name);checks.Add(name);File.WriteAllText(Path.Combine(output,"progress.txt"),checks.Count+": "+name);}
         try {
             Check(report.Errors.Count==0&&report.Loaded.Count==1,"Bundled DLL loaded successfully");
             var window=new MainWindow(registry,report);
+            window.Model.Preview.ConfirmClose=_=>SampleCloseDecision.Discard;
             var root=(FrameworkElement)window.Content;
             var vm=window.Model;
             void Layout(double width,double height){root.Measure(new Size(width,height));root.Arrange(new Rect(0,0,width,height));root.UpdateLayout();}
+            bool HasIconAboveCaption(Button button)
+            {
+                if(button.Content is not StackPanel content)return false;
+                var icon=Descendants<System.Windows.Shapes.Path>(content).SingleOrDefault();
+                var caption=Descendants<TextBlock>(content).SingleOrDefault();
+                return icon is not null&&caption is not null&&Bounds(icon,root).Bottom<=Bounds(caption,root).Top+.5;
+            }
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             Layout(1280,820);
             Check(vm.IsHome&&!vm.RibbonVisible&&!vm.SidebarVisible,"Initial home has no ribbon or empty sidebar");
@@ -51,6 +59,7 @@ internal static partial class ShellSmokeChecks
             var cleanEmpty=new ShellViewModel(new ModuleRegistry(),new ModuleLoadReport(Array.Empty<string>(),Array.Empty<string>()));
             Check(!cleanEmpty.HasModules&&!cleanEmpty.HasCommands&&!cleanEmpty.HasLoadErrors,"Clean empty catalog supported without a false error");
             var empty=new MainWindow(new ModuleRegistry(),new ModuleLoadReport(Array.Empty<string>(),new[]{"Test: module missing"}));
+            empty.Model.Preview.ConfirmClose=_=>SampleCloseDecision.Discard;
             Check(!empty.Model.HasModules&&!empty.Model.HasCommands&&empty.Model.HasLoadErrors,"No feature module: empty shell and visible load-error model");
             empty.Model.ShowModules.Execute(null);
             var emptyRoot=(FrameworkElement)empty.Content;emptyRoot.Measure(new Size(640,480));emptyRoot.Arrange(new Rect(0,0,640,480));emptyRoot.UpdateLayout();
@@ -61,7 +70,8 @@ internal static partial class ShellSmokeChecks
             var quickIcons=Descendants<Button>(window.QuickAccessBar).ToArray();
             Check(quickIcons.Length==6&&quickIcons.All(b=>b.Content is System.Windows.Shapes.Path),"Quick access uses six icon-only buttons including undo/redo, rather than text labels");
             Check(quickIcons.All(b=>!string.IsNullOrWhiteSpace(System.Windows.Automation.AutomationProperties.GetName(b))&&b.ToolTip is string text&&text.Length>3),"Icon-only actions retain accessible names and descriptive tooltips");
-            Check(new[]{window.QuickSaveButton,window.QuickPrintButton}.All(b=>!b.IsEnabled&&ToolTipService.GetShowOnDisabled(b)&&b.ToolTip.ToString()!.Contains("아직 연결되지")),"Unavailable icon actions remain disabled but explain status on hover");
+            Check(new[]{window.QuickPrintButton}.All(b=>!b.IsEnabled&&ToolTipService.GetShowOnDisabled(b)&&b.ToolTip.ToString()!.Contains("아직 연결되지")),"Unavailable icon actions remain disabled but explain status on hover");
+            Check(window.QuickSaveButton.Command==vm.SaveSample&&!window.QuickSaveButton.IsEnabled,"Sample save shares the host command and is disabled without dirty active sample");
             Check(window.QuickUndoButton.Command==vm.Undo&&window.QuickRedoButton.Command==vm.Redo,"Undo/redo icons share the sample workspace commands");
             Check(Descendants<Button>(window.PageViewBar).All(b=>!b.IsEnabled),"Page/zoom toolbar never pretends a PDF is open");
             vm.HomeTab.Execute(null);Layout(1280,820);
@@ -70,8 +80,37 @@ internal static partial class ShellSmokeChecks
             var searchTools=RibbonLayout.For("홈").Single(g=>g.Name=="검색").Tools;
             Check(searchTools.Select(t=>t.Caption).SequenceEqual(new[]{"문서 찾기","상세 검색"})&&!ReferenceEquals(searchTools[0].Icon,searchTools[1].Icon),"Find and advanced search have distinct purpose labels and independently drawn icons");
             Check(searchTools[0].Availability.Contains("현재 문서")&&searchTools[1].Availability.Contains("여러 PDF/폴더")&&searchTools.All(t=>t.Availability.Contains("미연결")),"Search tooltips distinguish scope without claiming implemented search");
+            vm.FileTab.Execute(null);Layout(1280,820);
+            var fileRibbonButtons=Descendants<Button>(window.FileRibbonPanel).ToArray();
+            Check(fileRibbonButtons.Length==6&&fileRibbonButtons.All(HasIconAboveCaption),"File ribbon keeps six captioned vector-icon buttons with icons above captions");
+            Check(fileRibbonButtons[0].Command==vm.OpenPreview&&fileRibbonButtons[1].Command==vm.SaveSample&&fileRibbonButtons[2].Command==vm.ReopenSavedSample&&!fileRibbonButtons[3].IsEnabled&&fileRibbonButtons[4].Command==vm.Home&&fileRibbonButtons[5].IsEnabled==vm.IsIdle,"File ribbon retains command bindings and unavailable/idle states");
+            vm.ViewTab.Execute(null);Layout(1280,820);
+            var viewRibbonButtons=Descendants<Button>(window.ViewRibbonPanel).ToArray();
+            Check(viewRibbonButtons.Length==8&&viewRibbonButtons.All(HasIconAboveCaption),"View ribbon keeps eight captioned vector-icon buttons with icons above captions");
+            Check(viewRibbonButtons.Select(b=>b.Command).SequenceEqual(new[]{vm.FitPage,vm.FitWidth,vm.SinglePage,vm.ContinuousPages,vm.Thumbnails,vm.Bookmarks,vm.ToggleSidebar,vm.ResetLayout}),"View ribbon retains all view command bindings");
+            var documentIcons=RibbonLayout.For("문서").SelectMany(g=>g.Tools).ToArray();
+            Check(documentIcons.Select(t=>t.Icon.ToString(System.Globalization.CultureInfo.InvariantCulture)).Distinct().Count()==documentIcons.Length,"Document crop/delete/insert/extract/reorder/merge/split tools use distinct geometry");
+            var basicIcons=RibbonLayout.For("기본").SelectMany(g=>g.Tools).ToArray();
+            Check(basicIcons.Select(t=>t.Icon.ToString(System.Globalization.CultureInfo.InvariantCulture)).Distinct().Count()==basicIcons.Length,"Basic hand/select/copy/paste/undo/redo/fit tools use distinct geometry");
+            var homeIcons=RibbonLayout.For("홈").SelectMany(g=>g.Tools).ToDictionary(t=>t.Caption,t=>t.Icon);
+            var commentIcons=RibbonLayout.For("주석").SelectMany(g=>g.Tools).ToDictionary(t=>t.Caption,t=>t.Icon);
+            Check(new[]{"노트","텍스트 상자","강조 표시","밑줄","취소선"}.All(c=>ReferenceEquals(homeIcons[c],commentIcons[c])),"Same annotation command keeps identical geometry across Home and Comment");
+            var viewIcons=viewRibbonButtons.Select(b=>Descendants<System.Windows.Shapes.Path>(b).Single().Data).ToArray();
+            Check(viewIcons.Select(icon=>icon.ToString(System.Globalization.CultureInfo.InvariantCulture)).Distinct().Count()==8,"View fit-page/fit-width/single/continuous/thumbnails tools use distinct geometry");
+            foreach(var tabCapture in new[]{("파일",vm.FileTab),("홈",vm.HomeTab),("기본",vm.BasicTab),("주석",vm.AnnotationTab),("문서",vm.DocumentTab),("보기",vm.ViewTab),("도움말",vm.ToolsTab)}) {
+                tabCapture.Item2.Execute(null);Layout(1280,820);
+                Capture(root,1280,820,1,Path.Combine(output,$"ribbon-{tabCapture.Item1}.png"));
+            }
+            vm.HomeTab.Execute(null);vm.ToolsTab.Execute(null);Layout(1280,820);
+            var helpRibbonButtons=Descendants<Button>(window.HelpRibbonPanel).ToArray();
+            Check(helpRibbonButtons.Length==4&&helpRibbonButtons.All(HasIconAboveCaption),"Help ribbon keeps contributed and app-info captioned vector-icon buttons with icons above captions");
+            var semanticIcons=new[]{"홈","기본","주석","문서"}.SelectMany(tab=>RibbonLayout.For(tab)).SelectMany(g=>g.Tools)
+                .Select(t=>(Caption:t.Caption,Shape:t.Icon.ToString(System.Globalization.CultureInfo.InvariantCulture)))
+                .Concat(fileRibbonButtons.Concat(viewRibbonButtons).Concat(helpRibbonButtons).Select(b=>(Caption:Descendants<TextBlock>(b).Single().Text,Shape:Descendants<System.Windows.Shapes.Path>(b).Single().Data.ToString(System.Globalization.CultureInfo.InvariantCulture)))).ToArray();
+            Check(semanticIcons.GroupBy(t=>t.Shape).All(g=>g.Select(t=>t.Caption).Distinct().Count()==1),"Different ribbon commands never reuse identical path data across all seven tabs");
+            Check(semanticIcons.GroupBy(t=>t.Caption).All(g=>g.Select(t=>t.Shape).Distinct().Count()==1),"The same ribbon command retains consistent path data across tabs");
+            Check(helpRibbonButtons[0].Command==vm.ModuleCommands[0].Run&&helpRibbonButtons[1].Command is null&&helpRibbonButtons[2].Command==vm.ShowModules&&helpRibbonButtons[3].Command==vm.ShowActivity,"Help ribbon retains contributed command and app-info bindings");
             Check(window.NavigationRail.Visibility==Visibility.Collapsed,"Empty home has no phantom navigation rail space");
-            vm.ToolsTab.Execute(null);Layout(1280,820);
             Check(vm.RibbonVisible&&vm.IsToolsTab,"Tools tab reveals contributed commands");
             var toolButton=Descendants<Button>(window.ModuleCommandItems).Single();
             Check(toolButton.Command==vm.ModuleCommands[0].Run,"Ribbon button binds to contributed command, not hardcoded feature");
@@ -240,7 +279,7 @@ internal static partial class ShellSmokeChecks
             Capture(root,640,480,1,Path.Combine(output,"thumbnail-selection-narrow.png"));
 
             // Page management: identity-preserving in-memory reorder, not PDF editing.
-            while(preview.DocumentCount>0)preview.CloseCurrent();vm.OpenPreview.Execute(null);preview.ShowThumbnails();preview.SetNavigationWidth(240);preview.SetThumbnailSize(180);await ThumbnailLayout();
+            CloseAllSamplesForTest(preview);vm.OpenPreview.Execute(null);preview.ShowThumbnails();preview.SetNavigationWidth(240);preview.SetThumbnailSize(180);await ThumbnailLayout();
             var originalPageIds=preview.PageIdentityOrder.ToArray();
             Check(preview.ThumbnailPageLabels.SequenceEqual(new[]{"1","2","3"}),"Thumbnail captions contain page numbers only, without chapter titles");
             var reorderCards=preview.ThumbnailCardBounds.ToArray();
@@ -309,6 +348,7 @@ internal static partial class ShellSmokeChecks
             Check(!preview.PreviewInsertionSlot(-1)&&preview.ThumbnailInsertionSlot==-1,"Invalid insertion preview cannot leave a stale red marker");
 
             await CheckPageManagement(window,root,Check,output,ThumbnailLayout);
+            await CheckSampleClosing(Check,output);
             File.WriteAllText(Path.Combine(output,"smoke.json"),JsonSerializer.Serialize(new{Passed=true,Count=checks.Count,Checks=checks,Scope="Real offscreen WPF content/layout, DLL commands, binding routes, deterministic synthetic failures; no native keyboard/mouse, physical monitor DPI, PDF or installer validation"},new JsonSerializerOptions{WriteIndented=true}));
             return 0;
         } catch(Exception ex) {File.WriteAllText(Path.Combine(output,"failure.txt"),ex.ToString());return 1;}

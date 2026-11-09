@@ -12,7 +12,7 @@ internal static partial class ShellSmokeChecks
     private static async Task CheckPageManagement(MainWindow window,FrameworkElement root,Action<bool,string> check,string output,Func<Task> layout)
     {
         var vm=window.Model;var preview=vm.Preview;
-        async Task Reset(){while(preview.DocumentCount>0)preview.CloseCurrent();vm.OpenPreview.Execute(null);preview.SelectDocument(0);preview.ShowThumbnails();preview.SetNavigationWidth(340);preview.SetThumbnailSize(112);await layout();}
+        async Task Reset(){CloseAllSamplesForTest(preview);vm.OpenPreview.Execute(null);preview.SelectDocument(0);preview.ShowThumbnails();preview.SetNavigationWidth(340);preview.SetThumbnailSize(112);await layout();}
         MenuItem Item(ContextMenu menu,string id)=>menu.Items.OfType<MenuItem>().Single(item=>AutomationProperties.GetAutomationId(item)==id);
         void Invoke(ContextMenu menu,string id){var item=Item(menu,id);check(item.IsEnabled,"Context operation enabled: "+id);item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent,item));}
         await Reset();
@@ -94,7 +94,7 @@ internal static partial class ShellSmokeChecks
         Capture(menuProof,(int)Math.Ceiling(menuProof.ActualWidth),(int)Math.Ceiling(menuProof.ActualHeight),1,Path.Combine(output,"page-actions-context-menu.png"));
         Invoke(preview.CreatePageContextMenu(),"PageUndo");await layout();check(preview.PageRotations.All(r=>r==0)&&preview.CanRedo,"Context undo operates the same sample history");
         Invoke(preview.CreatePageContextMenu(),"PageRedo");await layout();check(preview.PageRotations.SequenceEqual(new[]{90,0,90}),"Context redo operates the same sample history");
-        while(preview.DocumentCount>0)preview.CloseCurrent();await layout();
+        CloseAllSamplesForTest(preview);await layout();
         check(!vm.PreviewActive&&!vm.Undo.CanExecute(null)&&!vm.Redo.CanExecute(null)&&!vm.DeletePages.CanExecute(null)&&!vm.InsertPage.CanExecute(null)&&!preview.Undo()&&!preview.Redo(),"Closing every sample disables all history/page actions and safely returns home");
     }
 }

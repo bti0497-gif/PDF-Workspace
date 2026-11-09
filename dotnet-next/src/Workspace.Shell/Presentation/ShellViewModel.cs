@@ -76,6 +76,8 @@ public sealed class ShellViewModel : INotifyPropertyChanged
     public string Status { get=>status;private set {status=value;Changed();} }
     public bool IsBusy { get=>isBusy;private set {isBusy=value;Changed();Changed(nameof(IsIdle));foreach(var c in ModuleCommands)c.Run.Refresh();foreach(var m in Modules)m.Open.Refresh();Home.Refresh();ResetLayout.Refresh();OpenPreview.Refresh();foreach(var command in previewCommands)command.Refresh();} }
     public bool IsIdle=>!IsBusy;
+    public UiCommand SaveSample { get; }
+    public UiCommand ReopenSavedSample { get; }
     public UiCommand Undo { get; }
     public UiCommand Redo { get; }
     public UiCommand RotatePages { get; }
@@ -115,9 +117,12 @@ public sealed class ShellViewModel : INotifyPropertyChanged
     {
         this.registry=registry;LoadErrors=report.Errors.ToArray();
         Home=new(ShowHome,()=>!IsBusy);
-        OpenPreview=new(()=>{ActiveView=null;SidebarVisible=false;Preview.OpenSamples();PreviewActive=true;ScreenTitle="샘플 문서 · UI 검증";ActiveTab="보기";RibbonVisible=true;Status="샘플 문서 조작 중 · 실제 PDF가 아니며 저장되지 않습니다.";},()=>!IsBusy);
+        OpenPreview=new(()=>{ActiveView=null;SidebarVisible=false;Preview.OpenSamples();PreviewActive=true;ScreenTitle="샘플 문서 · UI 검증";ActiveTab="보기";RibbonVisible=true;Status="샘플 메모리 전용 · 실제 파일 아님 · 앱 종료 시 사라짐";},()=>!IsBusy);
         UiCommand PreviewCommand(Action run){var command=new UiCommand(run,()=>PreviewActive&&!IsBusy);previewCommands.Add(command);return command;}
         UiCommand EditCommand(Action run,Func<bool> available){var command=new UiCommand(run,()=>PreviewActive&&!IsBusy&&available());previewCommands.Add(command);return command;}
+        SaveSample=EditCommand(()=>{Preview.SaveCurrentSample();},()=>Preview.IsDirty);
+        ReopenSavedSample=new(()=>{if(!Preview.ReopenLastSavedSample())return;ActiveView=null;SidebarVisible=false;PreviewActive=true;ScreenTitle="샘플 문서 · UI 검증";ActiveTab="파일";RibbonVisible=true;Status="저장한 샘플 메모리 기준을 다시 열었습니다. 실제 파일 아님 · 앱 종료 시 사라짐";},()=>!IsBusy&&Preview.SavedClosedSampleCount>0);
+        previewCommands.Add(ReopenSavedSample);
         Undo=EditCommand(()=>{Preview.Undo();},()=>Preview.CanUndo);
         Redo=EditCommand(()=>{Preview.Redo();},()=>Preview.CanRedo);
         RotatePages=EditCommand(()=>{Preview.RotateSelectedPages(true);},()=>Preview.SelectedPages.Count>0);

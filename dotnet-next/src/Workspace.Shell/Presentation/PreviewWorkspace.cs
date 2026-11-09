@@ -312,7 +312,17 @@ public sealed partial class PreviewWorkspace : UserControl
 
     private void CloseDocument(int index)
     {
+        if (_confirmingClose) { _closeReentered = true; return; }
         if (index < 0 || index >= _documents.Count) return;
+        var closing = _documents[index];
+        if (DocumentDirty(closing))
+        {
+            var decision = AskClose(false, new[] { closing });
+            if (decision == SampleCloseDecision.Cancel) return;
+            if (decision == SampleCloseDecision.Save) Checkpoint(closing);
+        }
+        if (closing.SavedPages is { } saved)
+            _savedClosedSamples.Add(new SavedSample(closing.Name, closing.Category, saved.Select(CopyPage).ToArray()));
         CancelNavigationGesture(); SaveScroll();
         var selected = Current;
         _documents.RemoveAt(index);
@@ -397,7 +407,12 @@ public sealed partial class PreviewWorkspace : UserControl
         {
             var index = i;
             var row = new StackPanel { Orientation = Orientation.Horizontal };
-            var choose = Button(_documents[i].Name, "합성 샘플 문서 선택 · 실제 PDF 아님", () => SelectDocument(index));
+            var dirty = DocumentDirty(_documents[i]);
+            var description = _documents[i].Name + (dirty ? " · 저장하지 않은 샘플 변경" : " · 샘플 메모리 기준 상태") + " · 실제 파일 아님 · 앱 종료 시 사라짐";
+            var choose = Button(_documents[i].Name + (dirty ? " *" : ""), description, () => SelectDocument(index));
+            AutomationProperties.SetAutomationId(choose, "SampleDocumentTab" + index);
+            AutomationProperties.SetName(choose, description);
+            AutomationProperties.SetHelpText(choose, description);
             choose.BorderThickness = new Thickness(0); choose.Margin = new Thickness(0); choose.Padding = new Thickness(13, 8, 6, 8);
             choose.FontWeight = i == _active ? FontWeights.SemiBold : FontWeights.Normal;
             var close = Button("×", _documents[i].Name + " 닫기", () => CloseDocument(index));
@@ -891,7 +906,7 @@ public sealed partial class PreviewWorkspace : UserControl
         }
         _selectionCount.Text = $"선택 {d?.Selected.Count ?? 0}쪽 · 보는 쪽 {PageNumber}";
         _thumbnailSizeSlider.IsEnabled = d != null;
-        _status.Text = d == null ? "샘플 문서 없음" : "합성 목업 · 실제 PDF 아님 · 메모리 전용";
+        _status.Text = d == null ? "샘플 문서 없음" : (IsDirty ? "* 저장하지 않은 샘플 변경" : "샘플 메모리 기준 상태 (체크포인트)") + " · 실제 파일 아님 · 앱 종료 시 사라짐";
         HistoryChanged?.Invoke();
     }
 
@@ -1008,6 +1023,7 @@ public sealed partial class PreviewWorkspace : UserControl
         public string Name { get; } = name;
         public string Category { get; } = category;
         public SamplePage[] Pages { get; set; } = pages;
+        public SamplePage[]? SavedPages { get; set; } = pages.Select(CopyPage).ToArray();
         public List<PageHistoryEntry> UndoHistory { get; } = new();
         public List<PageHistoryEntry> RedoHistory { get; } = new();
         public int Page = 1;

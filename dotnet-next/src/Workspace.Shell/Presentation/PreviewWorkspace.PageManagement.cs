@@ -65,7 +65,7 @@ public sealed partial class PreviewWorkspace
 
     private void RefreshMutationView(bool refit)
     {
-        RebuildNavigation(); RebuildPages(); UpdateControls();
+        RebuildTabs(); RebuildNavigation(); RebuildPages(); UpdateControls();
         if (refit) QueueFit();
     }
 
@@ -155,7 +155,7 @@ public sealed partial class PreviewWorkspace
         var pages = d.Pages.Where((_, i) => d.Selected.Contains(i + 1)).Select(CopyPage).ToArray();
         var extracted = new SampleDocument($"추출 {++_extractionSequence} · {d.Name}", d.Category, pages)
         {
-            Scale = d.Scale, Fit = d.Fit, Continuous = d.Continuous,
+            SavedPages = null, Scale = d.Scale, Fit = d.Fit, Continuous = d.Continuous,
             Page = Math.Max(1, Array.FindIndex(pages, p => p.Identity == d.Pages[d.Page - 1].Identity) + 1)
         };
         extracted.Selected.Clear();
