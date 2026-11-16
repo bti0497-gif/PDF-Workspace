@@ -20,7 +20,7 @@ internal static partial class ShellSmokeChecks
     private static async Task CheckSampleClosing(Action<bool,string> check,string output)
     {
         var hosts=new Dictionary<PreviewWorkspace,FrameworkElement>();
-        ShellViewModel Fresh(){var window=new MainWindow(new ModuleRegistry(),new ModuleLoadReport(Array.Empty<string>(),Array.Empty<string>()));var model=window.Model;model.Preview.ConfirmClose=_=>SampleCloseDecision.Discard;hosts[model.Preview]=(FrameworkElement)window.Content;model.OpenPreview.Execute(null);return model;}
+        ShellViewModel Fresh(){var window=new MainWindow(new ModuleRegistry(),new ModuleLoadReport(Array.Empty<string>(),Array.Empty<string>()));var model=window.Model;model.Preview.RequestSampleName=null;model.Preview.ConfirmClose=_=>SampleCloseDecision.Discard;hosts[model.Preview]=(FrameworkElement)window.Content;model.OpenPreview.Execute(null);return model;}
         async Task Layout(FrameworkElement root,double width=1200,double height=800){if(root is PreviewWorkspace workspace&&hosts.TryGetValue(workspace,out var hostRoot))root=hostRoot;root.Measure(new Size(width,height));root.Arrange(new Rect(0,0,width,height));root.UpdateLayout();await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);root.UpdateLayout();}
         var vm=Fresh();var p=vm.Preview;await Layout(p);
         check(!p.IsDirty&&!p.HasDirtyDocuments&&!vm.SaveSample.CanExecute(null),"Initial samples are clean and no sample save is needed");
@@ -61,7 +61,7 @@ internal static partial class ShellSmokeChecks
         p.SelectThumbnail(1);p.ExtractSelectedPages();p.SaveCurrentSample();p.CloseCurrent();check(p.SavedClosedSampleCount==shelf+1,"Saved extraction is retained when closed");p.ReopenLastSavedSample();check(p.PageCount==1&&!p.IsDirty&&!p.CanUndo,"Saved extraction reopens independently and clean");
 
         var registry=new ModuleRegistry();var gate=new TaskCompletionSource<Workspace.Contracts.CommandResult>();registry.Register(new TestModule("close-slow",new TestCommand("close-slow.run",()=>gate.Task)));
-        var host=new MainWindow(registry,new ModuleLoadReport(Array.Empty<string>(),Array.Empty<string>()));var model=host.Model;var q=model.Preview;model.OpenPreview.Execute(null);await Layout((FrameworkElement)host.Content);
+        var host=new MainWindow(registry,new ModuleLoadReport(Array.Empty<string>(),Array.Empty<string>()));var model=host.Model;var q=model.Preview;q.RequestSampleName=null;model.OpenPreview.Execute(null);await Layout((FrameworkElement)host.Content);
         q.RotateSelectedPages(true);q.SelectDocument(1);q.RotateSelectedPages(true);var dirty=q.DirtyDocumentNames.ToArray();var current=q.ActiveDocumentName;
         var guard=typeof(MainWindow).GetMethod("GuardClosing",BindingFlags.Instance|BindingFlags.NonPublic)!;
         CancelEventArgs Exit(){var args=new CancelEventArgs();guard.Invoke(host,new object?[]{host,args});return args;}

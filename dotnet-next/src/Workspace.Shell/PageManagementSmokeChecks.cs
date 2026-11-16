@@ -86,7 +86,7 @@ internal static partial class ShellSmokeChecks
         await Reset();preview.SelectThumbnail(1);preview.SelectThumbnail(3,control:true);preview.RotateSelectedPages(true);await layout();
         vm.DocumentTab.Execute(null);await layout();
         var connected=Descendants<Button>(root).Where(b=>b.Name=="UnavailablePdfTool"&&b.Command!=null).ToArray();
-        check(connected.Length==4&&connected.All(b=>b.IsEnabled)&&vm.PreviewGroups.SelectMany(g=>g.Tools).Single(t=>t.Caption=="삭제").Command==vm.DeletePages,"Document ribbon exposes exactly four sample page actions through shared host commands");
+        check(connected.Length==7&&connected.All(b=>b.IsEnabled)&&vm.PreviewGroups.SelectMany(g=>g.Tools).Single(t=>t.Caption=="삭제").Command==vm.DeletePages,"Document ribbon exposes exactly seven sample page/assembly actions through shared host commands");
         Capture(root,1280,820,1,Path.Combine(output,"page-actions-document-ribbon.png"));
         vm.BasicTab.Execute(null);await layout();check(vm.PreviewGroups.SelectMany(g=>g.Tools).Single(t=>t.Caption=="실행 취소").Command==vm.Undo&&vm.PreviewGroups.SelectMany(g=>g.Tools).Single(t=>t.Caption=="다시 실행").Command==vm.Redo,"Basic ribbon uses same undo/redo commands as top icons and keyboard");
         var menuProof=preview.CreatePageContextMenu(3);menuProof.FontFamily=new FontFamily("Malgun Gothic");menuProof.FontSize=13;menuProof.Measure(new Size(500,900));menuProof.Arrange(new Rect(new Point(),menuProof.DesiredSize));menuProof.UpdateLayout();

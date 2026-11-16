@@ -65,7 +65,7 @@ public sealed partial class PreviewWorkspace
 
     private void RefreshMutationView(bool refit)
     {
-        RebuildTabs(); RebuildNavigation(); RebuildPages(); UpdateControls();
+        CancelCrop(); RebuildTabs(); RebuildNavigation(); RebuildPages(); UpdateControls();
         if (refit) QueueFit();
     }
 

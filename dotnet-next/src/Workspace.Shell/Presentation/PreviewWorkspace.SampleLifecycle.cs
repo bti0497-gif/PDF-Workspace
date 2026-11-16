@@ -22,7 +22,7 @@ public sealed partial class PreviewWorkspace
     private static bool SameContent(SamplePage[] a, SamplePage[] b) => a.Length == b.Length &&
         a.Zip(b).All(pair => SamePage(pair.First, pair.Second));
     private static bool SamePage(SamplePage a, SamplePage b) =>
-        a.Identity == b.Identity && a.Rotation == b.Rotation && a.IsBlank == b.IsBlank &&
+        a.Identity == b.Identity && a.Crop == b.Crop && a.Rotation == b.Rotation && a.IsBlank == b.IsBlank &&
         a.Title == b.Title && a.ShortTitle == b.ShortTitle && a.Introduction == b.Introduction &&
         a.Section == b.Section && a.Description == b.Description && a.Columns.SequenceEqual(b.Columns) &&
         a.Notes.SequenceEqual(b.Notes) && a.Rows.Length == b.Rows.Length &&
@@ -33,7 +33,7 @@ public sealed partial class PreviewWorkspace
     public bool SaveCurrentSample()
     {
         if (_confirmingClose || Current is not { } d || !DocumentDirty(d)) return false;
-        Checkpoint(d); RebuildTabs(); UpdateControls(); return true;
+        return SaveDocuments(new[] { d });
     }
 
     private SampleCloseDecision AskClose(bool exit, SampleDocument[] documents)
@@ -64,7 +64,7 @@ public sealed partial class PreviewWorkspace
         if (decision == SampleCloseDecision.Cancel) return false;
         if (decision == SampleCloseDecision.Save)
         {
-            foreach (var document in dirty) Checkpoint(document);
+            if (!SaveDocuments(dirty)) return false;
             RebuildTabs(); UpdateControls();
         }
         return true;

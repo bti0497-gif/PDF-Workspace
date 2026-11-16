@@ -48,8 +48,13 @@ public sealed class ShellViewModel : INotifyPropertyChanged
     public bool HasActiveView => ActiveView is not null;
     public bool ShowNavigation => !PreviewActive && (HasActiveView || SidebarVisible);
     public IReadOnlyList<RibbonGroup> PreviewGroups => RibbonLayout.For(ActiveTab).Select(group=>new RibbonGroup(group.Name,group.Tools.Select(tool=>tool.Caption switch {
+        "병합"=>tool with {Command=MergeSamples,Purpose="열린 샘플 병합 · 새 미저장 탭 · 메모리 전용"},
+        "분할"=>tool with {Command=SplitSample,Purpose="모든 쪽을 나누어 새 미저장 탭 생성 · 메모리 전용"},
+        "문서 찾기"=>tool with {Command=FindSample,Purpose="현재 합성 샘플 문구 찾기 (Ctrl+F) · 실제 PDF 아님"},
+        "상세 검색"=>tool with {Command=AdvancedSearchSample,Purpose="현재 합성 샘플 조건 검색 (Ctrl+Shift+F) · 여러 문서/폴더 미지원"},
         "실행 취소"=>tool with {Command=Undo,Purpose="샘플 작업 실행 취소 (Ctrl+Z)"},
         "다시 실행"=>tool with {Command=Redo,Purpose="샘플 작업 다시 실행 (Ctrl+Y)"},
+        "자르기"=>tool with {Command=CropPage,Purpose="현재 보는 샘플 1쪽 자르기 · 드래그 후 적용 · 실제 PDF 아님"},
         "회전"=>tool with {Command=RotatePages,Purpose="선택한 샘플 페이지를 시계 방향으로 90도 회전"},
         "삭제"=>tool with {Command=DeletePages,Purpose="선택한 샘플 페이지 삭제 · 최소 1쪽 유지"},
         "삽입"=>tool with {Command=InsertPage,Purpose="선택한 페이지 뒤에 빈 샘플 페이지 삽입"},
@@ -76,10 +81,28 @@ public sealed class ShellViewModel : INotifyPropertyChanged
     public string Status { get=>status;private set {status=value;Changed();} }
     public bool IsBusy { get=>isBusy;private set {isBusy=value;Changed();Changed(nameof(IsIdle));foreach(var c in ModuleCommands)c.Run.Refresh();foreach(var m in Modules)m.Open.Refresh();Home.Refresh();ResetLayout.Refresh();OpenPreview.Refresh();foreach(var command in previewCommands)command.Refresh();} }
     public bool IsIdle=>!IsBusy;
+    public bool IsAssembling {get;private set;}
+    public UiCommand MergeSamples {get;}
+    public UiCommand SplitSample {get;}
+    internal event Action<bool>? AssembleRequested;
+    internal void SetAssembling(bool value) {IsAssembling=value; foreach(var property in GetType().GetProperties()) if(property.GetValue(this) is UiCommand command)command.Refresh();}
+    public bool IsFileDialog { get; private set; }
+    public event Action? OpenSampleRequested;
+    public UiCommand OpenSample {get;}
+    public UiCommand SaveSampleAs {get;}
+    internal void SetFileDialog(bool value) { IsFileDialog=value; foreach(var property in GetType().GetProperties()) if(property.GetValue(this) is UiCommand command)command.Refresh(); }
+    internal void ActivateSample() { ActiveView=null;SidebarVisible=false;PreviewActive=true;ScreenTitle="샘플 문서 · UI 검증";ActiveTab="파일";RibbonVisible=true;Status=Preview.FileNotice; }
+    public bool IsPrinting { get; private set; }
+    public event Action? PrintRequested;
+    public UiCommand PrintSample { get; }
+    internal void SetPrinting(bool value) { IsPrinting=value; foreach(var property in GetType().GetProperties()) if(property.GetValue(this) is UiCommand command)command.Refresh(); }
+    public UiCommand FindSample { get; }
+    public UiCommand AdvancedSearchSample { get; }
     public UiCommand SaveSample { get; }
     public UiCommand ReopenSavedSample { get; }
     public UiCommand Undo { get; }
     public UiCommand Redo { get; }
+    public UiCommand CropPage { get; }
     public UiCommand RotatePages { get; }
     public UiCommand DeletePages { get; }
     public UiCommand InsertPage { get; }
@@ -118,13 +141,21 @@ public sealed class ShellViewModel : INotifyPropertyChanged
         this.registry=registry;LoadErrors=report.Errors.ToArray();
         Home=new(ShowHome,()=>!IsBusy);
         OpenPreview=new(()=>{ActiveView=null;SidebarVisible=false;Preview.OpenSamples();PreviewActive=true;ScreenTitle="샘플 문서 · UI 검증";ActiveTab="보기";RibbonVisible=true;Status="샘플 메모리 전용 · 실제 파일 아님 · 앱 종료 시 사라짐";},()=>!IsBusy);
-        UiCommand PreviewCommand(Action run){var command=new UiCommand(run,()=>PreviewActive&&!IsBusy);previewCommands.Add(command);return command;}
-        UiCommand EditCommand(Action run,Func<bool> available){var command=new UiCommand(run,()=>PreviewActive&&!IsBusy&&available());previewCommands.Add(command);return command;}
-        SaveSample=EditCommand(()=>{Preview.SaveCurrentSample();},()=>Preview.IsDirty);
+        UiCommand PreviewCommand(Action run){var command=new UiCommand(run,()=>PreviewActive&&!IsBusy&&!Preview.IsCropping);previewCommands.Add(command);return command;}
+        UiCommand EditCommand(Action run,Func<bool> available){var command=new UiCommand(run,()=>PreviewActive&&!IsBusy&&!Preview.IsCropping&&available());previewCommands.Add(command);return command;}
+        MergeSamples=EditCommand(()=>AssembleRequested?.Invoke(false),()=>Preview.DocumentCount>=2);
+        SplitSample=EditCommand(()=>AssembleRequested?.Invoke(true),()=>Preview.PageCount>=2);
+        PrintSample=EditCommand(()=>PrintRequested?.Invoke(),()=>Preview.PageCount>0);
+        FindSample=PreviewCommand(()=>Preview.OpenSearch(false));
+        AdvancedSearchSample=PreviewCommand(()=>Preview.OpenSearch(true));
+        OpenSample=new(()=>OpenSampleRequested?.Invoke(),()=>!IsBusy&&!Preview.IsCropping);
+        SaveSampleAs=EditCommand(()=>{Preview.SaveCurrentSampleAs();Status=Preview.FileNotice;},()=>Preview.PageCount>0);
+        SaveSample=EditCommand(()=>{Preview.SaveCurrentSample();Status=Preview.FileNotice;},()=>Preview.IsDirty);
         ReopenSavedSample=new(()=>{if(!Preview.ReopenLastSavedSample())return;ActiveView=null;SidebarVisible=false;PreviewActive=true;ScreenTitle="샘플 문서 · UI 검증";ActiveTab="파일";RibbonVisible=true;Status="저장한 샘플 메모리 기준을 다시 열었습니다. 실제 파일 아님 · 앱 종료 시 사라짐";},()=>!IsBusy&&Preview.SavedClosedSampleCount>0);
         previewCommands.Add(ReopenSavedSample);
         Undo=EditCommand(()=>{Preview.Undo();},()=>Preview.CanUndo);
         Redo=EditCommand(()=>{Preview.Redo();},()=>Preview.CanRedo);
+        CropPage=EditCommand(()=>Preview.BeginCrop(),()=>Preview.PageCount>0);
         RotatePages=EditCommand(()=>{Preview.RotateSelectedPages(true);},()=>Preview.SelectedPages.Count>0);
         DeletePages=EditCommand(()=>{Preview.DeleteSelectedPages();},()=>Preview.CanDeleteSelectedPages);
         InsertPage=EditCommand(()=>{Preview.InsertBlankPage(true);},()=>Preview.PageCount>0);
@@ -148,6 +179,7 @@ public sealed class ShellViewModel : INotifyPropertyChanged
         ClearActivity=new(()=>{Activity.Clear();Changed(nameof(HasActivity));Status="이번 실행의 명령 기록을 지웠습니다. 문서 파일은 변경하지 않았습니다.";});
         foreach(var module in registry.Modules) Modules.Add(new ModuleItem(module,()=>OpenModule(module),()=>!IsBusy));
         foreach(var command in registry.Commands) ModuleCommands.Add(new CommandItem(command,()=>_ = ExecuteModuleAsync(command.Id),()=>!IsBusy));
+        foreach(var property in GetType().GetProperties()) if(property.GetValue(this) is UiCommand command)command.Blocked=()=>IsPrinting||IsFileDialog||IsAssembling;
         if(HasLoadErrors) Status="일부 모듈을 연결하지 못했습니다. 모듈 패널에서 오류를 확인하세요.";
     }
     private void SelectTab(string name)

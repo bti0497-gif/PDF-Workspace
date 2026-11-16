@@ -221,6 +221,8 @@ public sealed partial class PreviewWorkspace : UserControl
             Background = BrushOf("#F4F5F7"), ToolTip = "좁은 창에서는 아래 가로 스크롤로 모든 보기 도구를 사용할 수 있습니다."
         };
         Grid.SetRow(footerScroller, 2); root.Children.Add(footerScroller);
+        InitializeSearch(root);
+        InitializeCrop(root);
         Content = root;
         AutomationProperties.SetName(this, "합성 문서 목업 작업 공간");
         AutomationProperties.SetName(_pageInput, "페이지 번호");
@@ -304,7 +306,7 @@ public sealed partial class PreviewWorkspace : UserControl
     public void SelectDocument(int index)
     {
         if (index < 0 || index >= _documents.Count || index == _active) return;
-        CancelNavigationGesture(); SaveScroll(); _active = index;
+        CancelCrop(); CancelNavigationGesture(); SaveScroll(); _active = index;
         RebuildTabs(); RebuildNavigation(); RebuildPages(); UpdateControls(); QueueFit();
     }
 
@@ -314,15 +316,15 @@ public sealed partial class PreviewWorkspace : UserControl
     {
         if (_confirmingClose) { _closeReentered = true; return; }
         if (index < 0 || index >= _documents.Count) return;
-        var closing = _documents[index];
+        CancelCrop(); var closing = _documents[index];
         if (DocumentDirty(closing))
         {
             var decision = AskClose(false, new[] { closing });
             if (decision == SampleCloseDecision.Cancel) return;
-            if (decision == SampleCloseDecision.Save) Checkpoint(closing);
+            if (decision == SampleCloseDecision.Save && !SaveDocuments(new[] { closing })) return;
         }
         if (closing.SavedPages is { } saved)
-            _savedClosedSamples.Add(new SavedSample(closing.Name, closing.Category, saved.Select(CopyPage).ToArray()));
+            { _savedClosedSamples.Add(new SavedSample(closing.Name, closing.Category, saved.Select(CopyPage).ToArray())); if (_savedClosedSamples.Count > VirtualSampleLimit) _savedClosedSamples.RemoveAt(0); }
         CancelNavigationGesture(); SaveScroll();
         var selected = Current;
         _documents.RemoveAt(index);
@@ -330,7 +332,7 @@ public sealed partial class PreviewWorkspace : UserControl
         {
             _active = -1; ++_viewRevision; _restoring = false;
             _tabs.Children.Clear(); _pages.Children.Clear(); _paperVisuals.Clear(); _thumbnailItems.Children.Clear(); _bookmarkItems.Children.Clear(); _thumbnailPapers.Clear(); _thumbnailLabels.Clear(); _navigationButtons.Clear();
-            UpdateControls(); Empty?.Invoke(); return;
+            CloseSearch(); UpdateControls(); Empty?.Invoke(); return;
         }
         _active = selected != null && _documents.Contains(selected) ? _documents.IndexOf(selected) : Math.Min(index, _documents.Count - 1);
         RebuildTabs(); RebuildNavigation(); RebuildPages(); UpdateControls(); QueueFit();
@@ -402,6 +404,7 @@ public sealed partial class PreviewWorkspace : UserControl
 
     private void RebuildTabs()
     {
+        RefreshSearchDocument();
         _tabs.Children.Clear();
         for (var i = 0; i < _documents.Count; i++)
         {
@@ -796,7 +799,7 @@ public sealed partial class PreviewWorkspace : UserControl
             var paper = BuildPaper(d, i);
             paper.LayoutTransform = PaperTransform(d.Pages[i], d.Scale);
             _paperVisuals.Add(paper);
-            _pages.Children.Add(new Border { Child = paper, Margin = new Thickness(0, 0, 0, PageGap) });
+            _pages.Children.Add(new Border { Child = paper, Margin = new Thickness(0, 0, 0, d.Continuous ? PageGap : 0) });
         }
         RestoreScroll();
     }
@@ -840,8 +843,8 @@ public sealed partial class PreviewWorkspace : UserControl
     }
     private double PageTop(int page, double scale) => Current is { } d
         ? d.Pages.Take(Math.Max(0, page - 1)).Sum(p => RotatedHeight(p) * scale + PageGap) : 0;
-    private static double RotatedWidth(SamplePage page) => page.Rotation % 180 == 0 ? PaperWidth : PaperHeight;
-    private static double RotatedHeight(SamplePage page) => page.Rotation % 180 == 0 ? PaperHeight : PaperWidth;
+    private static double RotatedWidth(SamplePage page) => page.Rotation % 180 == 0 ? page.Crop.Width : page.Crop.Height;
+    private static double RotatedHeight(SamplePage page) => page.Rotation % 180 == 0 ? page.Crop.Height : page.Crop.Width;
     private static Transform PaperTransform(SamplePage page, double scale) => new TransformGroup
     {
         Children = new TransformCollection { new RotateTransform(page.Rotation), new ScaleTransform(scale, scale) }
@@ -857,7 +860,8 @@ public sealed partial class PreviewWorkspace : UserControl
         if (Current is not { } d || d.Fit == FitKind.None || _canvas.ActualWidth < 60 || _canvas.ActualHeight < 60) return;
         // Reserve the vertical scrollbar so fit-width remains stable when it appears.
         var width = Math.Max(1, _canvas.ActualWidth - CanvasInset * 2 - SystemParameters.VerticalScrollBarWidth);
-        var height = Math.Max(1, _canvas.ActualHeight - CanvasInset * 2 - PageGap);
+        // A single page has no inter-page gap. Keep both canvas insets and reserve a gap only in continuous mode.
+        var height = Math.Max(1, _canvas.ActualHeight - CanvasInset * 2 - (d.Continuous ? PageGap : 0));
         var data = d.Pages[d.Page - 1];
         var scale = d.Fit == FitKind.Page ? Math.Min(width / RotatedWidth(data), height / RotatedHeight(data)) : width / RotatedWidth(data);
         SetScale(Math.Clamp(Math.Floor(scale * 100) / 100, .05, 4));
@@ -910,7 +914,7 @@ public sealed partial class PreviewWorkspace : UserControl
         HistoryChanged?.Invoke();
     }
 
-    private static Border BuildPaper(SampleDocument document, int index)
+    private static Border BuildOriginalPaper(SampleDocument document, int index)
     {
         var data = document.Pages[index];
         if (data.IsBlank)
@@ -1020,7 +1024,8 @@ public sealed partial class PreviewWorkspace : UserControl
     private enum FitKind { None, Page, Width }
     private sealed class SampleDocument(string name, string category, SamplePage[] pages)
     {
-        public string Name { get; } = name;
+        public string Name { get; set; } = name;
+        public string? VirtualName { get; set; }
         public string Category { get; } = category;
         public SamplePage[] Pages { get; set; } = pages;
         public SamplePage[]? SavedPages { get; set; } = pages.Select(CopyPage).ToArray();
@@ -1037,6 +1042,7 @@ public sealed partial class PreviewWorkspace : UserControl
         string Description, string[] Columns, string[][] Rows, string[] Notes)
     {
         public string Identity { get; } = Guid.NewGuid().ToString("N");
+        public Rect Crop { get; init; } = new Rect(0, 0, PaperWidth, PaperHeight);
         public int Rotation { get; init; }
         public bool IsBlank { get; init; }
     }

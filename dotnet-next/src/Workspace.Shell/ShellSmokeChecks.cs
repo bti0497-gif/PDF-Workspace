@@ -24,6 +24,7 @@ internal static partial class ShellSmokeChecks
         void Check(bool value,string name){if(!value)throw new InvalidOperationException(name);checks.Add(name);File.WriteAllText(Path.Combine(output,"progress.txt"),checks.Count+": "+name);}
         try {
             Check(report.Errors.Count==0&&report.Loaded.Count==1,"Bundled DLL loaded successfully");
+            await CheckReadOnlyPdfAsync(Check);
             var window=new MainWindow(registry,report);
             window.Model.Preview.ConfirmClose=_=>SampleCloseDecision.Discard;
             var root=(FrameworkElement)window.Content;
@@ -70,20 +71,21 @@ internal static partial class ShellSmokeChecks
             var quickIcons=Descendants<Button>(window.QuickAccessBar).ToArray();
             Check(quickIcons.Length==6&&quickIcons.All(b=>b.Content is System.Windows.Shapes.Path),"Quick access uses six icon-only buttons including undo/redo, rather than text labels");
             Check(quickIcons.All(b=>!string.IsNullOrWhiteSpace(System.Windows.Automation.AutomationProperties.GetName(b))&&b.ToolTip is string text&&text.Length>3),"Icon-only actions retain accessible names and descriptive tooltips");
-            Check(new[]{window.QuickPrintButton}.All(b=>!b.IsEnabled&&ToolTipService.GetShowOnDisabled(b)&&b.ToolTip.ToString()!.Contains("아직 연결되지")),"Unavailable icon actions remain disabled but explain status on hover");
+            Check(new[]{window.QuickPrintButton}.All(b=>!b.IsEnabled&&ToolTipService.GetShowOnDisabled(b)&&b.ToolTip.ToString()!.Contains("실제 인쇄 미연결")),"Unavailable icon actions remain disabled but explain status on hover");
             Check(window.QuickSaveButton.Command==vm.SaveSample&&!window.QuickSaveButton.IsEnabled,"Sample save shares the host command and is disabled without dirty active sample");
             Check(window.QuickUndoButton.Command==vm.Undo&&window.QuickRedoButton.Command==vm.Redo,"Undo/redo icons share the sample workspace commands");
             Check(Descendants<Button>(window.PageViewBar).All(b=>!b.IsEnabled),"Page/zoom toolbar never pretends a PDF is open");
             vm.HomeTab.Execute(null);Layout(1280,820);
             var pdfTools=Descendants<Button>(window.PdfRibbonGroups).ToArray();
-            Check(pdfTools.Length==9&&pdfTools.All(b=>!b.IsEnabled&&b.Command is null),"Home ribbon has nine explicitly unavailable PDF tools, not fake actions");
-            var searchTools=RibbonLayout.For("홈").Single(g=>g.Name=="검색").Tools;
+            Check(pdfTools.Length==9&&pdfTools.All(b=>!b.IsEnabled)&&pdfTools.Count(b=>b.Command is null)==7,"Home ribbon has seven unavailable PDF tools and two sample search commands disabled without a document");
+            CheckRibbonPolish(window,Check);
+            var searchTools=vm.PreviewGroups.Single(g=>g.Name=="검색").Tools;
             Check(searchTools.Select(t=>t.Caption).SequenceEqual(new[]{"문서 찾기","상세 검색"})&&!ReferenceEquals(searchTools[0].Icon,searchTools[1].Icon),"Find and advanced search have distinct purpose labels and independently drawn icons");
-            Check(searchTools[0].Availability.Contains("현재 문서")&&searchTools[1].Availability.Contains("여러 PDF/폴더")&&searchTools.All(t=>t.Availability.Contains("미연결")),"Search tooltips distinguish scope without claiming implemented search");
+            Check(searchTools[0].Availability.Contains("현재 합성 샘플")&&searchTools[1].Availability.Contains("여러 문서/폴더 미지원")&&searchTools.All(t=>t.Availability.Contains("미연결")),"Search tooltips distinguish scope without claiming implemented search");
             vm.FileTab.Execute(null);Layout(1280,820);
             var fileRibbonButtons=Descendants<Button>(window.FileRibbonPanel).ToArray();
-            Check(fileRibbonButtons.Length==6&&fileRibbonButtons.All(HasIconAboveCaption),"File ribbon keeps six captioned vector-icon buttons with icons above captions");
-            Check(fileRibbonButtons[0].Command==vm.OpenPreview&&fileRibbonButtons[1].Command==vm.SaveSample&&fileRibbonButtons[2].Command==vm.ReopenSavedSample&&!fileRibbonButtons[3].IsEnabled&&fileRibbonButtons[4].Command==vm.Home&&fileRibbonButtons[5].IsEnabled==vm.IsIdle,"File ribbon retains command bindings and unavailable/idle states");
+            Check(fileRibbonButtons.Length==7&&fileRibbonButtons.All(HasIconAboveCaption),"File ribbon keeps seven captioned vector-icon buttons with icons above captions");
+            Check(fileRibbonButtons[0].Command==vm.OpenSample&&fileRibbonButtons[1].Command==vm.SaveSample&&fileRibbonButtons[2].Command==vm.SaveSampleAs&&fileRibbonButtons[3].Command==vm.ReopenSavedSample&&!fileRibbonButtons[4].IsEnabled&&fileRibbonButtons[5].Command==vm.Home&&fileRibbonButtons[6].IsEnabled==vm.IsIdle,"File ribbon retains command bindings and unavailable/idle states");
             vm.ViewTab.Execute(null);Layout(1280,820);
             var viewRibbonButtons=Descendants<Button>(window.ViewRibbonPanel).ToArray();
             Check(viewRibbonButtons.Length==8&&viewRibbonButtons.All(HasIconAboveCaption),"View ribbon keeps eight captioned vector-icon buttons with icons above captions");
@@ -174,7 +176,7 @@ internal static partial class ShellSmokeChecks
                 Capture(root,1280,820,scale,Path.Combine(output,$"workspace-home-{scale:0.00}x.png"));
                 Check(window.HomeScreen.ActualWidth>1200,$"Raster scale {scale} preserves logical layout (not physical DPI)");
             }
-            Check(((MenuItem)window.QuickAccessOverflowMenu.Items[0]).Command==vm.Home&&((MenuItem)window.QuickAccessOverflowMenu.Items[1]).Command==vm.OpenPreview,"Narrow quick-access menu retains the same start/sample commands");
+            Check(((MenuItem)window.QuickAccessOverflowMenu.Items[0]).Command==vm.Home&&((MenuItem)window.QuickAccessOverflowMenu.Items[1]).Command==vm.OpenSample,"Narrow quick-access menu retains the same start/sample commands");
             var shortcut=window.InputBindings.OfType<KeyBinding>().Single(k=>k.Key==Key.F4);
             Check(shortcut.Command==vm.ToggleSidebar,"F4 bound to shared panel action");shortcut.Command.Execute(null);Layout(1280,820);
             Check(vm.SidebarVisible,"F4 command route toggles sidebar");
@@ -348,7 +350,13 @@ internal static partial class ShellSmokeChecks
             Check(!preview.PreviewInsertionSlot(-1)&&preview.ThumbnailInsertionSlot==-1,"Invalid insertion preview cannot leave a stale red marker");
 
             await CheckPageManagement(window,root,Check,output,ThumbnailLayout);
+            await CheckCompactLayout(Check,output);
             await CheckSampleClosing(Check,output);
+            await CheckSearch(Check,output);
+            await CheckCrop(Check,output);
+            await CheckPrint(Check,output);
+            CheckFileDialogs(Check,output);
+            CheckAssembly(Check,output);
             File.WriteAllText(Path.Combine(output,"smoke.json"),JsonSerializer.Serialize(new{Passed=true,Count=checks.Count,Checks=checks,Scope="Real offscreen WPF content/layout, DLL commands, binding routes, deterministic synthetic failures; no native keyboard/mouse, physical monitor DPI, PDF or installer validation"},new JsonSerializerOptions{WriteIndented=true}));
             return 0;
         } catch(Exception ex) {File.WriteAllText(Path.Combine(output,"failure.txt"),ex.ToString());return 1;}
