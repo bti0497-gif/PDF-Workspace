@@ -1,7 +1,7 @@
 # Windows PowerShell 5.1 compatible. Deletes only unchanged, manifest-listed files.
 $ErrorActionPreference = 'Stop'
 try {
-    $root = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'DeojonPdfDotNetTest'))
+    $root = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'DeojonPdfDotNetTest2'))
     if ([IO.Path]::GetFullPath($PSScriptRoot) -ne $root) { throw 'Unexpected uninstall directory.' }
     function Assert-NoLink([string]$Path) {
         for ($p = $Path; $p; $p = Split-Path $p -Parent) {
@@ -11,7 +11,7 @@ try {
     Assert-NoLink $root
     $manifestPath = Join-Path $root 'installed-files.json'; Assert-NoLink $manifestPath
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-    if ($manifest.ProductId -ne 'DeojonPdfDotNetTest-Local-1') { throw 'Incorrect uninstall manifest identity.' }
+    if ($manifest.ProductId -ne 'DeojonPdfDotNetTest2-Local-2') { throw 'Incorrect uninstall manifest identity.' }
     function Resolve-Owned([string]$Relative) {
         if ([string]::IsNullOrWhiteSpace($Relative) -or [IO.Path]::IsPathRooted($Relative) -or $Relative.Contains(':') -or $Relative -match '(^|[\\/])\.\.([\\/]|$)') { throw 'Unsafe manifest path.' }
         $full = [IO.Path]::GetFullPath((Join-Path $root $Relative))

@@ -2,7 +2,7 @@
 $ErrorActionPreference = 'Stop'
 try {
     if (-not [Environment]::Is64BitOperatingSystem) { throw 'Windows x64 is required.' }
-    $root = Join-Path $env:LOCALAPPDATA 'DeojonPdfDotNetTest'
+    $root = Join-Path $env:LOCALAPPDATA 'DeojonPdfDotNetTest2'
     for ($p = $env:LOCALAPPDATA; $p; $p = Split-Path $p -Parent) {
         if ((Get-Item -LiteralPath $p -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Reparse-point install ancestors are not supported.' }
     }

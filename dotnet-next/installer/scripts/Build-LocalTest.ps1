@@ -62,7 +62,7 @@ $stage=Join-Path $output ('.installer-staging-'+$buildId)
 $payload=Join-Path $stage 'payload'; New-Item -ItemType Directory -Path $payload -Force | Out-Null
 # Retain staging and receipts for inspection; never recursively clean user-supplied directories.
 Get-ChildItem -LiteralPath $publish -Force | Copy-Item -Destination $payload -Recurse
-Rename-Item -LiteralPath (Join-Path $payload 'Workspace.Shell.exe') -NewName 'DeojonPdfDotNetTest.exe'
+Rename-Item -LiteralPath (Join-Path $payload 'Workspace.Shell.exe') -NewName 'DeojonPdfDotNetTest2.exe'
 if ((Get-FileHash -LiteralPath (Join-Path $payload 'Workspace.Shell.dll')).Hash -ne $evidence.PublishedShellSha256) { throw 'Staged Shell DLL changed after backend evidence validation.' }
 $dependency=Join-Path $payload 'Dependencies\PdfCraft\0.21.1'
 if (Test-Path -LiteralPath $dependency) { throw 'Publish unexpectedly already contains PdfCraft; refusing ambiguous provenance.' }
@@ -91,15 +91,15 @@ foreach ($notice in @('LICENSE-MIT','LICENSE-APACHE','LICENSE-document.txt','NOT
 }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Remove-OwnedFiles.ps1') -Destination $payload
 Copy-Item -LiteralPath (Join-Path $tooling 'README.ko.md') -Destination (Join-Path $payload 'LOCAL-TEST-README.txt')
-[ordered]@{EvidenceScope=$evidence.EvidenceScope;PublishedShellSha256=$evidence.PublishedShellSha256;BackendTestsPassed=$true;OffscreenSmokePassed=$true;NativeUiTested=$false;FidelityAccepted=$false;NativeUiLimitation=$evidence.NativeUiLimitation} | ConvertTo-Json | Set-Content (Join-Path $payload 'EXPERIMENTAL-ACCEPTANCE-SCOPE.json') -Encoding utf8
+[ordered]@{EvidenceScope=$evidence.EvidenceScope;PublishedShellSha256=$evidence.PublishedShellSha256;BackendTestsPassed=$true;OffscreenSmokePassed=$true;MainWorkspaceTestsPassed=$true;MainWorkspaceKind=$evidence.MainWorkspaceKind;NativeUiTested=$false;FidelityAccepted=$false;NativeUiLimitation=$evidence.NativeUiLimitation} | ConvertTo-Json | Set-Content (Join-Path $payload 'EXPERIMENTAL-ACCEPTANCE-SCOPE.json') -Encoding utf8
 $files=@(Get-ChildItem -LiteralPath $payload -Recurse -File | ForEach-Object { [ordered]@{Path=[IO.Path]::GetRelativePath($payload,$_.FullName);Sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash} })
 $dirs=@(Get-ChildItem -LiteralPath $payload -Recurse -Directory | ForEach-Object { [IO.Path]::GetRelativePath($payload,$_.FullName) })
-[ordered]@{ProductId='DeojonPdfDotNetTest-Local-1';BuildId=$buildId;Files=$files;Directories=$dirs} | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $payload 'installed-files.json') -Encoding utf8
+[ordered]@{ProductId='DeojonPdfDotNetTest2-Local-2';BuildId=$buildId;Files=$files;Directories=$dirs} | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $payload 'installed-files.json') -Encoding utf8
 . (Join-Path $PSScriptRoot 'Nsis-Payload.ps1')
 $include=Join-Path $stage 'payload.nsh'
 Write-NsisPayloadInclude -PayloadDirectory $payload -IncludePath $include
-$installer=Join-Path $output ('DeojonPdfDotNetTest-local-'+$buildId+'.exe')
+$installer=Join-Path $output ('DeojonPdfDotNetTest2-local-'+$buildId+'.exe')
 & $MakeNsis /NOCONFIG /INPUTCHARSET UTF8 "/DOUTPUT_EXE=$(NsisCompileQuote $installer)" "/DPAYLOAD=$(NsisCompileQuote $payload)" "/DTOOLING=$(NsisCompileQuote $tooling)" "/DPAYLOAD_INCLUDE=$(NsisCompileQuote $include)" (Join-Path $tooling 'LocalTest.nsi') 2>&1 | Tee-Object (Join-Path $stage 'compiler.log')
 if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $installer)) { throw 'NSIS build failed. Stage retained for inspection.' }
-[ordered]@{ProductId='DeojonPdfDotNetTest-Local-1';Installer=$installer;Sha256=(Get-FileHash -LiteralPath $installer).Hash;PdfCraftSha256=$expected;ArchiveSha256=$officialZip;VerificationSha256=(Get-FileHash -LiteralPath $VerificationJson).Hash;SourcePinSha256=(Get-FileHash -LiteralPath (Join-Path $foundation 'src\Workspace.Shell\PdfViewing\ReadOnlyPdfSession.cs')).Hash;Stage=$stage;Installed=$false;EvidenceScope=$evidence.EvidenceScope;BackendTestsPassed=$true;OffscreenSmokePassed=$true;NativeUiTested=$false;FidelityAccepted=$false;NativeUiLimitation=$evidence.NativeUiLimitation;OtherPcSupport=$false} | ConvertTo-Json | Set-Content ($installer+'.receipt.json') -Encoding utf8
+[ordered]@{ProductId='DeojonPdfDotNetTest2-Local-2';Installer=$installer;Sha256=(Get-FileHash -LiteralPath $installer).Hash;PdfCraftSha256=$expected;ArchiveSha256=$officialZip;VerificationSha256=(Get-FileHash -LiteralPath $VerificationJson).Hash;SourcePinSha256=(Get-FileHash -LiteralPath (Join-Path $foundation 'src\Workspace.Shell\PdfViewing\ReadOnlyPdfSession.cs')).Hash;Stage=$stage;Installed=$false;EvidenceScope=$evidence.EvidenceScope;BackendTestsPassed=$true;OffscreenSmokePassed=$true;MainWorkspaceTestsPassed=$true;MainWorkspaceKind=$evidence.MainWorkspaceKind;NativeUiTested=$false;FidelityAccepted=$false;NativeUiLimitation=$evidence.NativeUiLimitation;OtherPcSupport=$false} | ConvertTo-Json | Set-Content ($installer+'.receipt.json') -Encoding utf8
 Write-Output "Built only: $installer. Backend/offscreen evidence only. Native UI and fidelity NOT accepted. NOT installed, launched, signed or released."

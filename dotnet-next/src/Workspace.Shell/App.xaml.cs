@@ -7,6 +7,12 @@ public partial class App:Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (e.Args.Length == 2 && e.Args[0] == "--update-smoke") {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            try { await Updates.UpdateSmokeChecks.RunAsync(e.Args[1]); Shutdown(0); }
+            catch (Exception error) { File.WriteAllText(Path.Combine(e.Args[1], "failure.txt"), error.ToString()); Shutdown(1); }
+            return;
+        }
         // Explicit developer-only verification mode. Never fall through to normal windows, even on bad arguments.
         if (e.Args.Length > 0 && e.Args[0] == "--pdfops-smoke")
         {
@@ -41,15 +47,25 @@ public partial class App:Application
             }
             return;
         }
+        if(e.Args.Length==3&&e.Args[0]=="--session-smoke"){
+            ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            try{await PdfViewing.RealSessionChecks.RunAsync(e.Args[1],e.Args[2]);Shutdown(0);}
+            catch(Exception error){Directory.CreateDirectory(e.Args[2]);File.WriteAllText(Path.Combine(e.Args[2],"failure.txt"),error.ToString());Shutdown(1);}return;
+        }
         var registry=new ModuleRegistry();
         var report=ModuleLoader.Load(Path.Combine(AppContext.BaseDirectory,"modules.json"),Path.Combine(AppContext.BaseDirectory,"Modules"),registry);
+        if(e.Args.Length==3&&e.Args[0]=="--real-main-smoke"){
+            ShutdownMode=ShutdownMode.OnExplicitShutdown;
+            Shutdown(await RealMainSmokeChecks.RunAsync(registry,report,e.Args[1],e.Args[2]));return;
+        }
         if(e.Args.Length==2&&e.Args[0]=="--smoke") {
             ShutdownMode=ShutdownMode.OnExplicitShutdown;
             Shutdown(await ShellSmokeChecks.RunAsync(registry,report,e.Args[1]));return;
         }
         var window=new MainWindow(registry,report);MainWindow=window;
-        if(e.Args.Contains("--preview")){window.Model.OpenPreview.Execute(null);window.WindowState=WindowState.Maximized;}
+        // Normal launches always begin with a blank real PDF workspace.
         window.Show();
+        // The interrupted updater prototype is retained for review, but is not started.
         // File-association launch: one already-unquoted path argument. Never change associations here.
         if (e.Args.Length == 1 && e.Args[0] != "--preview") window.OpenReadOnlyPdf(e.Args[0]);
         else if (e.Args.Length > 0 && !(e.Args.Length == 1 && e.Args[0] == "--preview")) MessageBox.Show(window, "한 번에 PDF 경로 하나만 지정하십시오.", "PDF 읽기 전용 TEST");

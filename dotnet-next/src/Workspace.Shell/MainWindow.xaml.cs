@@ -19,6 +19,7 @@ public partial class MainWindow : Window
         // Keep room for the thumbnail surface at the supported 640x480 minimum.
         // Preserve font sizes and the user's ribbon visibility; only limit its scroll viewport.
         ShellRoot.SizeChanged+=(_,e)=>ApplyCompactChrome(e.NewSize);
+        InitializeRealWorkspace();
         Closing+=GuardClosing;
         Closed+=(_,_)=>{Model.PropertyChanged-=ModelChanged;Model.LayoutResetRequested-=ResetPanelWidth;};
     }
@@ -36,8 +37,8 @@ public partial class MainWindow : Window
             StatusText.TextTrimming=TextTrimming.CharacterEllipsis;
             RibbonScroller.ToolTip=shortHeight?"작은 창에서는 리본을 세로 스크롤하여 모든 도구를 사용할 수 있습니다. 리본 펼침 설정은 유지됩니다.":null;
             var compact=size.Width<700;
-            QuickAccessBar.Visibility=compact?Visibility.Collapsed:Visibility.Visible;
-            QuickAccessOverflow.Visibility=compact?Visibility.Visible:Visibility.Collapsed;
+            QuickAccessBar.Visibility=realWorkspace!=null?Visibility.Collapsed:compact?Visibility.Collapsed:Visibility.Visible;
+            QuickAccessOverflow.Visibility=realWorkspace!=null?Visibility.Collapsed:compact?Visibility.Visible:Visibility.Collapsed;
     }
     private void ModelChanged(object? sender,PropertyChangedEventArgs e)
     {
@@ -60,6 +61,7 @@ public partial class MainWindow : Window
     }
     private void GuardClosing(object? sender,CancelEventArgs e)
     {
+        if(realWorkspace!=null){GuardRealClosing(e);return;}
         if(Model.IsAssembling){assembleWindow?.Close();e.Cancel=true;return;}
         if(Model.IsFileDialog){fileWindow?.Close();e.Cancel=true;return;}
         if(Model.IsPrinting){ClosePrint();e.Cancel=true;return;}

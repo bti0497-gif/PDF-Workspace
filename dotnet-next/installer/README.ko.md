@@ -4,7 +4,7 @@
 
 이 폴더는 기존 Electron 앱과 다른 **로컬 PC 시험 설치 도구**만 제공합니다. 기능 개발/통합 완료, 설치 파일 제작 완료, 설치·제거 QA, 다른 PC 배포 적합성을 뜻하지 않습니다. 자동 업데이트, 네트워크 다운로드, SDK/런타임 설치, 기본 PDF 연결 변경, 파일 연결 등록은 없습니다. 설치 후 앱을 자동 실행하지 않습니다.
 
-**사용자가 승인한 로컬 실험판입니다. 네이티브 UI 미검증을 숨기지 않고, 실제 게시 DLL의 백엔드 기능 검사와 오프스크린 smoke가 통과하면 시험 패키지를 만들 수 있습니다.** CreateDIBSection 오류로 네이티브 입력 검사는 차단되어 있으며 다음 버전 과제로 남습니다. 이것은 실제 UI 종단 간 성공, 모든 PDF/한국어 표시 충실도, 운영 품질 승인이 아닙니다.
+**사용자가 승인한 로컬 실험판입니다. 네이티브 UI 미검증을 숨기지 않고, 실제 게시 DLL의 백엔드 기능 검사와 오프스크린 smoke가 통과하면 시험 패키지를 만들 수 있습니다.** 이전 시험에서는 CreateDIBSection 오류가 보고되었습니다. 새 메인 작업 화면의 네이티브 입력은 별도 미검증이며, 과거 오류가 현재도 재현된다고 단정하지 않습니다. 이것은 실제 UI 종단 간 성공, 모든 PDF/한국어 표시 충실도, 운영 품질 승인이 아닙니다.
 
 Build-LocalTest.ps1은 기본적으로 차단됩니다. `-ReleasePublishConfirmed -BackendTestsComplete -BuildInstaller`를 모두 지정하고 아래의 범위가 명확한 증거를 제출해야 합니다. `NativeUiTested=false`, `FidelityAccepted=false`는 필수 JSON 불리언이며 누락·문자열·true는 거부합니다. 스위치는 담당자의 명시적 판단이며, 증거 자체가 자동으로 진실을 증명하는 것은 아닙니다.
 
@@ -18,17 +18,19 @@ Build-LocalTest.ps1은 기본적으로 차단됩니다. `-ReleasePublishConfirme
 
 ## 다른 제품과 분리되는 설치 식별자
 
-- 제품: Deojon PDF .NET TEST (local PC only)
-- 실행파일: DeojonPdfDotNetTest.exe (공식 apphost 이름만 별도로 변경, 원래 Workspace.Shell.dll 유지)
-- 고정 설치 경로: `%LOCALAPPDATA%\DeojonPdfDotNetTest`
-- 시작 메뉴: 현재 사용자 `Deojon PDF .NET TEST`
-- 제거 키: HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\DeojonPdfDotNetTest-Local-1
+- 제품: Deojon PDF .NET TEST 2 (local PC only)
+- 실행파일: DeojonPdfDotNetTest2.exe (공식 apphost 이름만 별도로 변경, 원래 Workspace.Shell.dll 유지)
+- 고정 설치 경로: `%LOCALAPPDATA%\DeojonPdfDotNetTest2`
+- 시작 메뉴: 현재 사용자 `Deojon PDF .NET TEST 2`
+- 제거 키: HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\DeojonPdfDotNetTest2-Local-2
 - 관리자 승격 없음. 자동 실행 없음. `/S` 무인 설치/제거 차단.
 - 기존 설치 폴더가 있으면 덮어쓰지 않고 중단합니다. 디렉터리 변경 화면이나 기존 앱 경로 사용을 제공하지 않습니다.
 
+TEST 2는 기존 TEST 1을 제거할 필요가 없습니다. 기존 `%LOCALAPPDATA%\DeojonPdfDotNetTest` 폴더·시작 메뉴·제거 등록·사용자 파일을 읽어서 이식하거나 덮어쓰지 않습니다. TEST 2 폴더 자체가 이미 있으면 여전히 중단합니다. 제거 프로그램은 TEST 2 manifest만 인정합니다. 테스트 패키지 식별 버전은 `0.2.0-local-test-2`이며 앱 자체 버전이나 운영 배포 버전 승인을 뜻하지 않습니다. 시작 메뉴와 Windows 설치 앱 목록에서 **TEST 2**로 구별하십시오.
+
 ## 1. 도구 자체 검사만 수행
 
-PowerShell 7에서 다음 명령은 스크립트 구문, NSIS `/SAFEPPO` 전처리, 승인 누락 차단 및 **작은 테스트 payload의 실제 NSIS 컴파일**을 검사합니다. 실제 앱 패키지는 만들지 않습니다. 공백·한글·달러 기호가 있는 파일명으로 생산용 payload 생성 함수를 검사하고, 설치 초기화에서 무조건 중단하도록 만든 `COMPILER-FIXTURE-DO-NOT-RUN.exe`만 고유 임시 폴더에 생성합니다. 이 테스트 EXE도 실행하거나 설치하지 않습니다. 이전 실패 staging/로그는 보존합니다.
+PowerShell 7에서 다음 명령은 스크립트 구문, NSIS `/SAFEPPO` 전처리, 승인 누락 차단 및 **작은 테스트 payload의 실제 NSIS 컴파일**을 검사합니다. 실제 앱 패키지는 만들지 않습니다. 공백·한글·달러 기호가 있는 파일명으로 생산용 payload 생성 함수를 검사하고, 설치 초기화에서 무조건 중단하도록 만든 `COMPILER-FIXTURE-DO-NOT-RUN.exe`만 고유 임시 폴더에 생성합니다. 이 테스트 EXE도 실행하거나 설치하지 않습니다. 이전 실패 staging/로그는 보존합니다. 가짜 LOCALAPPDATA에서 TEST 1 폴더가 있어도 TEST 2 선행 조건이 통과하고, TEST 2 폴더가 있으면 거부되는지, TEST 2 제거 후 TEST 1 사용자 파일 해시가 그대로인지 검사합니다. 실제 설치 경로·등록·바로가기는 건드리지 않습니다.
 
 ```powershell
 & .\scripts\Test-Tooling.ps1 -TemporaryDirectory '<별도 임시 폴더>'
@@ -37,6 +39,8 @@ PowerShell 7에서 다음 명령은 스크립트 구문, NSIS `/SAFEPPO` 전처�
 기본 NSIS 경로는 이 PC에서 확인된 electron-builder 캐시의 3.0.4.1 컴파일러입니다. `-MakeNsis`로 기존 로컬 컴파일러만 지정할 수 있습니다. 다운로드하지 않습니다. 전처리만으로는 NSIS File 명령 문법이 검증되지 않으므로 작은 fixture의 실제 컴파일을 반드시 수행합니다. 생성 문법은 `File "/oname=name with spaces.txt" "원본 경로"`이며 `File /oname="..."`가 아닙니다. 작은 fixture 통과는 실제 전체 패키지 컴파일·설치·제거 QA를 대신하지 않습니다.
 
 ## 2. 정확한 게시 DLL의 백엔드·오프스크린 검사 후 실험판 생성
+
+입력은 새 실제 PDF 메인 작업 화면을 포함해 이미 Release로 게시한 **전체 폴더**입니다. 샘플 전용 이전 게시 폴더를 재포장하지 않습니다. MainWorkspaceTestsPassed=true와 MainWorkspaceKind="real-pdf"는 해당 게시 DLL의 메인 작업 화면 자동화 검사 통과 근거가 있을 때만 작성합니다. 이 도구 자체 fixture는 해당 앱 검사를 실행하거나 통과를 보증하지 않습니다.
 
 입력은 이미 Release로 게시한 **전체 폴더**입니다. 도구는 publish/build/restore를 하지 않습니다. 제공자는 Release 및 win-x64 게시 결과임을 확인해야 합니다. 모듈 DLL, deps/runtimeconfig, apphost가 필요하며 net9.0 framework-dependent 구성을 검사합니다.
 
@@ -48,9 +52,11 @@ PowerShell 7에서 다음 명령은 스크립트 구문, NSIS `/SAFEPPO` 전처�
   "ReleasePublish": true,
   "BackendTestsPassed": true,
   "OffscreenSmokePassed": true,
+  "MainWorkspaceTestsPassed": true,
+  "MainWorkspaceKind": "real-pdf",
   "NativeUiTested": false,
   "FidelityAccepted": false,
-  "NativeUiLimitation": "CreateDIBSection 오류로 실제 UI 입력 검사가 차단됨. 네이티브 동작·한국어/PDF 충실도는 미승인.",
+  "NativeUiLimitation": "실제 PDF 메인 작업 화면의 자동화/오프스크린 검사만 수행. 네이티브 입력·한국어/PDF 충실도는 별도 미검증.",
   "PublishedShellSha256": "실제로 검사한 게시 DLL의 SHA256",
   "BackendOperations": {
     "open": true, "render": true, "rotate": true, "delete": true,
@@ -90,3 +96,10 @@ CLI는 앱의 ReadOnlyPdfSession.cs PinnedHash와 비교하고 Authenticode Vali
 설치 시 파일별 상대 경로·SHA-256 및 알려진 폴더를 installed-files.json으로 기록합니다. 제거는 고정 설치 루트/제품 ID/경로 이탈/링크를 먼저 검사한 후 **해시가 같은 알려진 파일만** 삭제합니다. 수정된 파일·미등록 사용자 문서는 보존합니다. 알려진 빈 폴더만 비재귀 삭제하며 `RMDir /r` 또는 사용자 경로에 대한 와일드카드 재귀 삭제가 없습니다. 목록/해시가 손상되면 중단합니다. 메타데이터·자체 제거 프로그램·정확한 전용 바로가기만 별도로 정리합니다. 같은 사용자에 의한 악의적 스크립트/manifest 변조를 방어하는 보안 샌드박스는 아닙니다.
 
 설치 중 실패/강제 종료 복구, 실행 중 파일 잠금, 제거 재시도, 실제 UAC·다중 사용자·백신·다른 PC, 서명/SmartScreen 및 한국어 렌더 충실도는 아직 검증하지 않았습니다. 실험판 생성 전 정확한 게시 DLL의 백엔드 기능·원본 보존·오프스크린 검사를 확인하고, 네이티브 UI와 충실도 미검증은 명시적으로 유지합니다. 설치/실행/제거의 실제 동작은 별도 확인 대상이며 백엔드 통과로 간주하지 않습니다.
+
+
+## TEST 2 도구 검사 기록 및 인계
+
+이 변경에서는 도구 검사만 수행했습니다. 로컬 NSIS 3.0.4.1로 생산 템플릿의 작은 중단 전용 fixture 컴파일, PowerShell 구문, 승인 누락 차단, 증거 스키마 15건, fake LOCALAPPDATA의 TEST 1/TEST 2 공존·덮어쓰기 거부·해시 기반 제거 보존 검사가 통과했습니다. fixture EXE는 실행하지 않았습니다.
+
+새 메인 실제 PDF 소스는 별도 작업자가 구현 중이므로 이 기록은 해당 앱의 자동화 검사 통과를 주장하지 않습니다. 패키징 담당자는 구현 완료 후 정확한 Release 게시 DLL에서 메인 실제 PDF 자동화·백엔드·오프스크린 검사를 실행하고 그 DLL 해시의 증거 JSON을 작성한 다음 빌드 도구를 실행해야 합니다. 최종 설치 파일 제작·설치·실행·제거, 네이티브 GUI 입력 및 사용자 수용 검증은 이 변경에서 수행하지 않았습니다. 기존 설치·사용자 데이터·기본 앱 설정·외부 게시도 변경하지 않았습니다.
