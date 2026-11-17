@@ -1,0 +1,77 @@
+using System.IO;
+using System.Runtime.CompilerServices;
+using Workspace.Contracts;
+using Workspace.Runtime;
+
+var count = 0;
+void Check(bool value, string text) { if(!value) throw new Exception(text); Console.WriteLine("PASS " + text); count++; }
+var first = Path.GetFullPath(args[0]); var second = Path.GetFullPath(args[1]);
+IsolatedModuleManifest Manifest(string version, ModuleReloadPolicy policy = ModuleReloadPolicy.Collectible) => new("probe",version,1,"Probe.dll","Fixture.Probe",policy);
+var manager = new IsolatedModuleManager();
+Check(manager.Load(Manifest("1.0.0"), first).Success,"real built DLL loads with shared contract identity");
+using (var lease = manager.Acquire("probe"))
+{
+    Check(Run(lease) == "1", "private dependency version one");
+    Check(!manager.Unload("probe").Success, "active lease blocks unload");
+    Check(!manager.Replace(Manifest("2.0.0"),second).Success,"active lease blocks replacement");
+}
+Check(!manager.Replace(Manifest("9.0.0"), second).Success,"failed candidate rejected atomically");
+using (var lease = manager.Acquire("probe")) Check(VersionOf(lease) == new Version(1,0,0),"failed patch retains old module");
+var replaced = manager.Replace(Manifest("2.0.0"),second);
+Check(replaced.Success,"valid version replacement");
+using (var lease = manager.Acquire("probe")) Check(Run(lease) == "2","replacement resolves isolated dependency version two");
+Check(Collected(replaced.UnloadedContext!),"old context collected after replacement");
+var unloaded = manager.Unload("probe");
+Check(unloaded.Success && Collected(unloaded.UnloadedContext!),"new context collected after unload");
+Check(!manager.Load(Manifest("1.0.0") with {ApiVersion=99},first).Success,"API mismatch rejected");
+Check(!manager.Load(Manifest("1.0.0") with {Assembly="../Probe.dll"},first).Success,"path escape rejected");
+Check(manager.Load(Manifest("1.0.0",ModuleReloadPolicy.RestartRequired),first).Success,"deferred module loads");
+Check(!manager.Replace(Manifest("2.0.0"),second).Success,"deferred policy retains current module until restart");
+Check(!manager.Unload("probe").Success,"deferred module blocks runtime unload");
+Check(manager.Unload("probe",applicationShutdown:true).Success,"deferred shutdown disposal supported");
+Check(manager.Load(Manifest("2.0.0"),second).Success,"next-launch candidate version loads");
+Environment.SetEnvironmentVariable("WORKSPACE_TEST_DISPOSE_FAIL","1");
+Check(!manager.Unload("probe").Success,"disposal failure is not reported as unload");
+try { using var unexpected=manager.Acquire("probe"); throw new Exception("faulted module acquired"); }
+catch(InvalidOperationException) { Check(true,"disposal-faulted module cannot be reused"); }
+Environment.SetEnvironmentVariable("WORKSPACE_TEST_DISPOSE_FAIL",null);
+Check(manager.Unload("probe",true).Success,"shutdown can retry disposal");
+
+var wpf = new IsolatedModuleManager(typeof(Workspace.Desktop.Contracts.IWorkspaceAreaModule).Assembly);
+var area = new IsolatedModuleManifest("area","1.0.0",1,"WpfFixture.dll","Fixture.Area",ModuleReloadPolicy.Collectible);
+Check(wpf.Load(area,Path.GetFullPath(args[2])).Success,"real WPF area DLL shares desktop contract identity");
+Check(!wpf.Replace(area,Path.GetFullPath(args[2])).Success,"WPF forces deferred policy despite collectible manifest");
+Check(!wpf.Unload("area").Success,"WPF runtime unload conservatively refused");
+Check(wpf.Unload("area",true).Success,"WPF shutdown disposal requests unload without collection claim");
+var calls=0; var documentId=Guid.NewGuid();
+var state=new WorkspaceState((intent,token)=> {calls++; return Task.FromResult(new CommandResult(true,intent.CommandId));},
+    (id,version,page,dpi,token)=>Task.FromResult(new byte[]{1,2,3}));
+var selection=new[]{1}; var notifications=0;
+state.DocumentChanged += (_,_)=>throw new Exception("isolated listener");
+state.DocumentChanged += (_,_)=>notifications++;
+state.Publish(new(documentId,"document",3,1,selection,false,1,1));
+selection[0]=3;
+Check(state.Document.SelectedPages[0]==1 && notifications==1,"immutable snapshot and notification fault isolation");
+Check(!(await state.DispatchAsync(new("rotate",documentId,0))).Success && calls==0,"stale command cannot reach domain owner");
+Check((await state.DispatchAsync(new("rotate",documentId,1))).Success && calls==1,"intent forwarded once to owner");
+Check((await state.RenderPageAsync(documentId,1,1,96)).Length==3,"render forwarded to owner");
+state.Publish(state.Document with {CurrentPage=2,Version=2});
+Check((await state.RenderPageAsync(documentId,1,2,96)).Length==3,"selection navigation preserves content revision");
+try { await state.RenderPageAsync(documentId,0,1,96); throw new Exception("stale render allowed"); }
+catch(InvalidOperationException) {Check(true,"stale content render rejected");}
+Console.WriteLine($"PASS {count} isolation and shared-state checks");
+
+[MethodImpl(MethodImplOptions.NoInlining)]
+static bool Collected(WeakReference weak)
+{
+    for(var i=0;i<20 && weak.IsAlive;i++) { GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect(); Thread.Sleep(10); }
+    return !weak.IsAlive;
+}
+
+[MethodImpl(MethodImplOptions.NoInlining)]
+static string Run(ModuleLease lease) => lease.Module.Commands[0].ExecuteAsync(default).GetAwaiter().GetResult().Message;
+
+[MethodImpl(MethodImplOptions.NoInlining)]
+static Version VersionOf(ModuleLease lease) => lease.Module.Descriptor.Version;
+
+

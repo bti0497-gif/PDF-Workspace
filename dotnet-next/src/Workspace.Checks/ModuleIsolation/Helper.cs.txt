@@ -1,0 +1,9 @@
+namespace PrivateHelper;
+public static class Value
+{
+#if V1
+    public static string Text => "1";
+#else
+    public static string Text => "2";
+#endif
+}

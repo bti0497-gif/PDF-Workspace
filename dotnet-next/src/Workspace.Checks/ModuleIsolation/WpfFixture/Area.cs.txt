@@ -1,0 +1,12 @@
+using System.Windows;
+using Workspace.Contracts;
+using Workspace.Desktop.Contracts;
+namespace Fixture;
+public sealed class Area : IWorkspaceAreaModule
+{
+    public ModuleDescriptor Descriptor => new("area","Area",new Version(1,0,0),1);
+    public IReadOnlyList<IWorkspaceCommand> Commands => Array.Empty<IWorkspaceCommand>();
+    public string Region => WorkspaceRegions.Sidebar;
+    public FrameworkElement CreateView(IWorkspaceHost host) => new System.Windows.Controls.Border();
+    public void Dispose() { }
+}

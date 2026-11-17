@@ -1,0 +1,1 @@
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net9.0-windows</TargetFramework><UseWPF>true</UseWPF><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup><ItemGroup><Compile Include="Area.cs.txt" /><ProjectReference Include="../../../Workspace.Desktop.Contracts/Workspace.Desktop.Contracts.csproj" /></ItemGroup></Project>

@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows</TargetFramework><UseWPF>true</UseWPF>
+    <OutputType>Exe</OutputType><EnableDefaultItems>false</EnableDefaultItems>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <DefineConstants>$(DefineConstants);STARTUP_CHECKS</DefineConstants>
+    <StartupObject>Workspace.Shell.Startup.StartupOpenChecks</StartupObject>
+  </PropertyGroup>
+  <ItemGroup><Compile Include="RecentFiles.cs"/><Compile Include="StartupOpenWindow.cs"/><Compile Include="StartupOpenChecks.cs"/></ItemGroup>
+</Project>

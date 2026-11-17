@@ -1,0 +1,14 @@
+using Workspace.Contracts;
+namespace Fixture;
+public sealed class Probe : IWorkspaceModule, IDisposable
+{
+    public ModuleDescriptor Descriptor => new("probe", "Probe", new Version(int.Parse(PrivateHelper.Value.Text),0,0), 1);
+    public IReadOnlyList<IWorkspaceCommand> Commands => new IWorkspaceCommand[] {new Command()};
+    public void Dispose() { if(Environment.GetEnvironmentVariable("WORKSPACE_TEST_DISPOSE_FAIL") == "1") throw new Exception("fixture disposal failure"); }
+    private sealed class Command : IWorkspaceCommand
+    {
+        public string Id => "probe.run";
+        public string Caption => "Run";
+        public Task<CommandResult> ExecuteAsync(CancellationToken token) => Task.FromResult(new CommandResult(true, PrivateHelper.Value.Text));
+    }
+}

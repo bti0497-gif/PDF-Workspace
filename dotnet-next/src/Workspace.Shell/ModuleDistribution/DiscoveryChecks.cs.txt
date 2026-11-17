@@ -1,0 +1,117 @@
+using System.Net;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Workspace.Shell.ModuleDistribution;
+
+int passed = 0;
+void Check(bool condition, string label) { if (!condition) throw new Exception(label); Console.WriteLine("PASS " + label); passed++; }
+async Task Reject(Func<Task> action, string label) { try { await action(); } catch (Exception ex) when (ex is DistributionException or OperationCanceledException) { Check(true,label); return; } throw new Exception("Unexpected success: " + label); }
+object Release(string tag,bool draft=false,bool prerelease=false,string? published="2026-11-17T01:02:03Z") => new {tag_name=tag,draft,prerelease,published_at=published};
+string Page(int number) => ReleaseDiscovery.Endpoint+"?per_page=100&page="+number;
+HttpResponseMessage Response(object[] entries,string? link=null)
+{
+    var response = new HttpResponseMessage(HttpStatusCode.OK) {Content=new StringContent(JsonSerializer.Serialize(entries))};
+    if(link is not null) response.Headers.TryAddWithoutValidation("Link",link);
+    return response;
+}
+var handler = new MockHandler(); using var client = new HttpClient(handler);
+var discovery = new ReleaseDiscovery(client);
+handler.Reply=(request,ct)=>Task.FromResult(Response([Release("wpf-v1.0.2"),Release("v1.0.5"),Release("wpf-v1.0.10"),Release("wpf-v1.0.3"),Release("wpf-v9.0.0",draft:true),Release("wpf-v8.0.0",prerelease:true),Release("wpf-v7.0.0",published:null)]));
+var result = await discovery.DiscoverAsync("1.0.1");
+Check(result.Version=="1.0.10" && !result.IsOfflineFallback && result.PagesRead==1,"numeric maximum ignores ordering, Electron latest, drafts, prereleases and unpublished entries");
+Check(handler.Requests.Single()==Page(1),"only exact official repo release-list URL requested");
+handler.Reply=(r,c)=>Task.FromResult(Response([Release("wpf-v1.0.1"),Release("wpf-v9.0.0\n"),Release("wpf-v01.0.2"),Release("wpf-v1.2.3/../../evil"),Release("wpf-v1.2.3?host=evil"),Release("WPF-v9.0.0"),Release("wpf-v65535.0.0")]));
+Check((await discovery.DiscoverAsync("1.0.1")).Version=="1.0.1","malicious/noncanonical tags ignored including trailing newline");
+handler.Requests.Clear();
+handler.Reply=(r,c)=>Task.FromResult(r.RequestUri!.AbsoluteUri==Page(1)
+    ? Response([Release("wpf-v1.0.4")],"<"+Page(2)+">; rel=\"next\", <"+Page(3)+">; rel=\"last\"")
+    : r.RequestUri.AbsoluteUri==Page(2)
+        ? Response([Release("wpf-v1.2.0")],"<"+ReleaseDiscovery.Endpoint+"?page=3&per_page=100>; rel=\"next\", <"+Page(1)+">; rel=\"prev\"")
+        : Response([Release("wpf-v1.1.9")]));
+result=await discovery.DiscoverAsync("1.0.1");
+Check(result.Version=="1.2.0" && result.PagesRead==3 && handler.Requests.SequenceEqual(new[]{Page(1),Page(2),Page(3)}),"multiple pages and validated next cursor select global numeric maximum");
+handler.Reply=(r,c)=>Task.FromResult(Response([Release("v1.0.5"),Release("wpf-v1.0.1")]));
+await Reject(()=>discovery.DiscoverAsync("1.0.2"),"no release at installed floor fails instead of downgrade");
+await Reject(()=>discovery.DiscoverAsync("1.0.01"),"invalid installed version rejected");
+await Reject(()=>discovery.DiscoverAsync("1.0.0"),"installed version below initial1.0.1 rejected");
+foreach(var link in new[]{"<https://evil.invalid/releases?page=2>; rel=\"next\"","<http://api.github.com/repos/bti0497-gif/PDF-Workspace/releases?per_page=100&page=2>; rel=\"next\"","<"+Page(1)+">; rel=\"next\"","<"+Page(3)+">; rel=\"next\"","<"+Page(2)+"&token=secret>; rel=\"next\"","<"+Page(2)+">; rel=\"next\", <"+Page(2)+">; rel=\"next\"","<"+Page(11)+">; rel=\"last\""})
+{
+    handler.Requests.Clear(); handler.Reply=(r,c)=>Task.FromResult(Response([Release("wpf-v1.0.1")],link));
+    await Reject(()=>discovery.DiscoverAsync("1.0.1"),"untrusted/looping/skipping/duplicate/over-limit cursor refused");
+    Check(handler.Requests.Count==1,"invalid cursor never requested");
+}
+handler.Reply=(r,c)=>Task.FromResult(new HttpResponseMessage(HttpStatusCode.Found) { Headers={Location=new Uri("https://evil.invalid/")},Content=new StringContent("") });
+await Reject(()=>discovery.DiscoverAsync("1.0.1"),"redirect rejected rather than followed");
+handler.Reply=(r,c)=>Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { RequestMessage=new HttpRequestMessage(HttpMethod.Get,"https://evil.invalid/"),Content=new StringContent("[]") });
+await Reject(()=>discovery.DiscoverAsync("1.0.1"),"misconfigured auto-redirecting injected client detected");
+handler.Reply=(r,c)=>Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {Content=new StringContent(new string(' ',ReleaseDiscovery.MaximumPageBytes+1))});
+await Reject(()=>discovery.DiscoverAsync("1.0.1"),"oversized content-length rejected");
+handler.Reply=(r,c)=>Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {Content=new UnknownLengthContent(new byte[ReleaseDiscovery.MaximumPageBytes+1])});
+await Reject(()=>discovery.DiscoverAsync("1.0.1"),"unknown-length streaming size bound enforced");
+handler.Reply=(r,c)=>Task.FromResult(Response(Enumerable.Range(0,101).Select(i=>Release("wpf-v1.0.1")).ToArray()));
+await Reject(()=>discovery.DiscoverAsync("1.0.1"),"array count bound enforced");
+handler.Reply=(r,c)=>Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {Content=new StringContent("[{\"tag_name\":\"wpf-v1.0.1\",\"tag_name\":\"wpf-v9.0.0\",\"draft\":false,\"prerelease\":false,\"published_at\":\"2026-11-17T00:00:00Z\"}]")});
+await Reject(()=>discovery.DiscoverAsync("1.0.1"),"duplicate release identity properties rejected");
+handler.Requests.Clear();
+handler.Reply=(r,c)=>
+{
+    int number=handler.Requests.Count;
+    var entries=new object[]{new {tag_name="wpf-v1.0.1",draft=false,prerelease=false,published_at="2026-11-17T01:02:03Z",body=new string('x',950000)}};
+    return Task.FromResult(Response(entries,number<6 ? "<"+Page(number+1)+">; rel=\"next\"" : null));
+};
+await Reject(()=>discovery.DiscoverAsync("1.0.1"),"aggregate byte budget rejects oversized multi-page feed");
+Check(handler.Requests.Count==6,"aggregate limit stops enumeration without partial maximum");
+using(var cancelMid=new CancellationTokenSource())
+{
+    handler.Reply=(r,c)=>{cancelMid.Cancel(); return Task.FromResult(Response([Release("wpf-v1.0.1")],"<"+Page(2)+">; rel=\"next\""));};
+    await Reject(()=>discovery.DiscoverAsync("1.0.1",cancellationToken:cancelMid.Token),"mid-response cancellation stops discovery");
+}
+handler.Reply=(r,c)=>Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {Content=new StringContent("not JSON")});
+await Reject(()=>discovery.DiscoverAsync("1.0.1"),"malformed metadata fails closed");
+handler.Reply=(r,c)=>throw new HttpRequestException("fixture offline");
+await Reject(()=>discovery.DiscoverAsync("1.0.1"),"first install offline has no silent1.0.1 fallback");
+using(var cancel=new CancellationTokenSource()) { cancel.Cancel(); await Reject(()=>discovery.DiscoverAsync("1.0.1",cancellationToken:cancel.Token),"caller cancellation propagated"); }
+handler.Reply=async(r,c)=>{ await Task.Delay(Timeout.Infinite,c); return Response([]); };
+await Reject(()=>new ReleaseDiscovery(client,TimeSpan.FromMilliseconds(20)).DiscoverAsync("1.0.1"),"whole-operation deadline bounded without network");
+
+// Build a real, locally verified active DLL cache, not a boolean 'verified' stub.
+var fixture=File.ReadAllBytes(Path.Combine(args[0],"fixture","bin","Debug","net9.0","Discovery.Fixture.dll"));
+var asset=new ModuleAsset("Discovery.Fixture","1.0.0",new ReleaseSource("1.0.1").AssetPrefix+"Discovery.Fixture-1.0.0.dll",fixture.Length,Convert.ToHexString(SHA256.HashData(fixture)));
+var manifest=new DistributionManifest(ModuleDistributionService.Product,"1.0.1",1,[asset]);
+using var discoverySigningKey=RSA.Create(3072);
+var discoveryPolicy=new ManifestSignaturePolicy(discoverySigningKey.ExportSubjectPublicKeyInfoPem());
+var signedManifest=JsonSerializer.SerializeToUtf8Bytes(manifest,new JsonSerializerOptions {PropertyNamingPolicy=JsonNamingPolicy.CamelCase});
+var signature=discoverySigningKey.SignData(signedManifest,HashAlgorithmName.SHA256,RSASignaturePadding.Pss);
+var payloadHandler=new MockHandler(); using var payloadClient=new HttpClient(payloadHandler);
+payloadHandler.Reply=(r,c)=>Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {Content=new ByteArrayContent(r.RequestUri!.AbsoluteUri==asset.Url ? fixture : r.RequestUri.AbsoluteUri.EndsWith(".sig",StringComparison.Ordinal) ? signature : signedManifest)});
+var cache=new ModuleDistributionService(payloadClient,Path.Combine(args[0],"cache"),manifestSignaturePolicy:discoveryPolicy);
+var candidate=(await cache.PrepareAsync(new("1.0.1"))).Candidate!; await cache.ActivateAsync(candidate);
+handler.Reply=(r,c)=>throw new HttpRequestException("fixture offline");
+result=await discovery.DiscoverAsync("1.0.1",cache);
+Check(result.Version=="1.0.1" && result.IsOfflineFallback,"offline initial version allowed only after actual active cache revalidation");
+await Reject(()=>discovery.DiscoverAsync("1.0.2",cache),"offline cache below installed product cannot downgrade");
+handler.Reply=(r,c)=>Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) {Content=new StringContent("unavailable")});
+Check((await discovery.DiscoverAsync("1.0.1",cache)).IsOfflineFallback,"HTTP endpoint unavailable permits only verified cached version");
+handler.Reply=(r,c)=>Task.FromResult(Response([]));
+await Reject(()=>discovery.DiscoverAsync("1.0.1",cache),"empty successful feed does not become offline fallback");
+handler.Reply=(r,c)=>Task.FromResult(new HttpResponseMessage(HttpStatusCode.Found) {Headers={Location=new Uri("https://evil.invalid/")}});
+await Reject(()=>discovery.DiscoverAsync("1.0.1",cache),"security failure does not become offline fallback");
+File.WriteAllBytes(Path.Combine(candidate.DirectoryPath,"Discovery.Fixture.dll"),new byte[fixture.Length]);
+handler.Reply=(r,c)=>throw new HttpRequestException("fixture offline");
+await Reject(()=>discovery.DiscoverAsync("1.0.1",cache),"corrupt cache rejected during offline discovery fallback");
+Console.WriteLine($"TOTAL {passed} release discovery checks passed; all HTTP mocked, no network.");
+
+sealed class MockHandler : HttpMessageHandler
+{
+    public Func<HttpRequestMessage,CancellationToken,Task<HttpResponseMessage>> Reply=null!;
+    public List<string> Requests {get;}=new();
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken token)
+    { token.ThrowIfCancellationRequested(); Requests.Add(request.RequestUri!.AbsoluteUri); var response=await Reply(request,token); response.RequestMessage ??=request; return response; }
+}
+sealed class UnknownLengthContent(byte[] bytes) : HttpContent
+{
+    protected override Task SerializeToStreamAsync(Stream stream,TransportContext? context)=>stream.WriteAsync(bytes).AsTask();
+    protected override bool TryComputeLength(out long length) {length=0;return false;}
+    protected override Task<Stream> CreateContentReadStreamAsync()=>Task.FromResult<Stream>(new MemoryStream(bytes));
+}

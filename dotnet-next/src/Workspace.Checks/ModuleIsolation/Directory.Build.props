@@ -1,0 +1,1 @@
+<Project><Import Project="../../../Directory.Build.props" /><PropertyGroup><BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)../obj/ModuleIsolation/$(MSBuildProjectName)/</BaseIntermediateOutputPath><BaseOutputPath>$(MSBuildThisFileDirectory)../bin/ModuleIsolation/$(MSBuildProjectName)/</BaseOutputPath></PropertyGroup></Project>

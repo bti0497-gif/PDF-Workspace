@@ -1,0 +1,3 @@
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><AssemblyName>Probe</AssemblyName><EnableDefaultCompileItems>false</EnableDefaultCompileItems><DefineConstants>V2</DefineConstants></PropertyGroup><ItemGroup><Compile Include="../Probe.cs.txt" /><ProjectReference Include="../../../Workspace.Contracts/Workspace.Contracts.csproj" /><ProjectReference Include="Helper/Helper2.csproj" /></ItemGroup></Project>
+
+

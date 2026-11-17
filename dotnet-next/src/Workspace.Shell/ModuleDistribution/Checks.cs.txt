@@ -1,0 +1,168 @@
+using System.Net;
+using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Workspace.Shell.ModuleDistribution;
+
+var home = args[0];
+var payload = File.ReadAllBytes(Path.Combine(home,"fixture","bin","Debug","net9.0","Distribution.Checks.dll"));
+var json = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+using var signingKey = RSA.Create(3072);
+var signingPolicy = new ManifestSignaturePolicy(signingKey.ExportSubjectPublicKeyInfoPem());
+int passed = 0;
+void Check(bool ok, string label) { if (!ok) throw new Exception(label); Console.WriteLine("PASS " + label); passed++; }
+async Task Reject(Func<Task> action, string label) { try { await action(); } catch (Exception e) when (e is DistributionException or OperationCanceledException or HttpRequestException) { Check(true,label); return; } throw new Exception("Accepted: " + label); }
+ModuleAsset Asset(string release, string id = "Distribution.Checks") => new(id,"1.0.0",new ReleaseSource(release).AssetPrefix + id + "-1.0.0.dll",payload.Length,Convert.ToHexString(SHA256.HashData(payload)));
+DistributionManifest Manifest(string release) => new(ModuleDistributionService.Product,release,1,[Asset(release)]);
+var handler = new Fake(); using var http = new HttpClient(handler);
+void Feed(DistributionManifest manifest) { handler.Map.Clear(); handler.Map[new ReleaseSource(manifest.Version).ManifestUri.AbsoluteUri] = JsonSerializer.SerializeToUtf8Bytes(manifest,json); handler.Map[new ReleaseSource(manifest.Version).ManifestSignatureUri.AbsoluteUri] = signingKey.SignData(handler.Map[new ReleaseSource(manifest.Version).ManifestUri.AbsoluteUri],HashAlgorithmName.SHA256,RSASignaturePadding.Pss); foreach(var a in manifest.Modules) handler.Map[a.Url] = payload; handler.Requests.Clear(); }
+var service = new ModuleDistributionService(http,Path.Combine(home,"cache"),manifestSignaturePolicy:signingPolicy);
+Feed(Manifest("1.0.1"));
+var stages = new List<string>();
+var initialProgress = new List<DistributionProgress>();
+var first = await service.PrepareAsync(new("1.0.1"),new ProgressSink(x=>{stages.Add(x.Stage);initialProgress.Add(x);}));
+var initialPlan = initialProgress.Single(p=>p.Stage=="Plan");
+Check(initialPlan.PlannedVersion=="1.0.0" && initialPlan.InstalledVersion is null && initialPlan.ChangeKind=="Install","first-install plan uses module version, not product1.0.1; installed remains unknown");
+Check(initialProgress.FindIndex(p=>p.Stage=="Plan") < initialProgress.FindIndex(p=>p.Stage=="Downloading"),"module plan precedes every module download");
+Check(initialProgress.Where(p=>p.ModuleId is not null).All(p=>p.PlannedVersion=="1.0.0" && p.InstalledVersion is null && p.AssetName=="Distribution.Checks.dll"),"all initial module stages retain accurate version and asset identity");
+Check(initialPlan.ModuleCount==1 && initialPlan.VerifiedModuleCount==0 && initialProgress.Single(p=>p.Stage=="Verified").VerifiedModuleCount==1,"verified work counts advance only after actual module verification");
+Check(first.Status == "Ready" && await service.GetActiveAsync() is null,"1.0.1 first install stages, no implicit activation");
+await service.ActivateAsync(first.Candidate!);
+Check((await service.GetActiveAsync())!.Manifest.Version == "1.0.1","atomic explicit activation");
+handler.Requests.Clear();
+var currentProgress = new List<DistributionProgress>();
+Check((await service.PrepareAsync(new("1.0.1"),new ProgressSink(currentProgress.Add))).Status == "NoChange" && handler.Requests.Count == 2,"no-change fetches only manifest and detached signature");
+Check(currentProgress.Single(p=>p.Stage=="Plan") is { PlannedVersion:"1.0.0", InstalledVersion:"1.0.0", ChangeKind:"Reuse" } && currentProgress.Last().VerifiedModuleCount==1,"no-change still reports truthful complete module plan");
+Feed(Manifest("1.0.2"));
+var reuseProgress = new List<DistributionProgress>();
+var second = await service.PrepareAsync(new("1.0.2"),new ProgressSink(reuseProgress.Add));
+Check(reuseProgress.Single(p=>p.Stage=="Plan") is { PlannedVersion:"1.0.0", InstalledVersion:"1.0.0", ChangeKind:"Reuse" },"new product release does not fabricate new module version");
+Check(second.Status == "Ready" && handler.Requests.Count == 2,"changed-only update reuses unchanged DLL without download");
+await service.ActivateAsync(second.Candidate!);
+Check((await service.RollbackAsync()).Manifest.Version == "1.0.1","explicit rollback restores verified prior directory");
+Feed(Manifest("1.0.1"));
+await Reject(()=>service.PrepareAsync(new("1.0.1")),"rollback retains downgrade high-water mark");
+handler.Offline = true;
+var offlineProgress = new List<DistributionProgress>();
+Check((await service.PrepareAsync(new("1.0.2"),new ProgressSink(offlineProgress.Add))).Status == "Offline","offline uses hash-reverified prior active cache");
+Check(offlineProgress.Single(p=>p.ModuleId is not null) is { PlannedVersion:null, InstalledVersion:"1.0.0", ChangeKind:"Cached" },"offline does not invent online planned version");
+var empty = new ModuleDistributionService(http,Path.Combine(home,"empty"),manifestSignaturePolicy:signingPolicy);
+await Reject(()=>empty.PrepareAsync(new("1.0.1")),"offline first install clearly fails");
+handler.Offline = false;
+using(var cancelled = new CancellationTokenSource()) { cancelled.Cancel(); await Reject(()=>service.PrepareAsync(new("1.0.2"),cancellationToken:cancelled.Token),"cancellation does not activate"); }
+async Task Bad(DistributionManifest m,string label) { Feed(m); await Reject(()=>empty.PrepareAsync(new(m.Version)),label); Check(handler.Requests.Count == 2,label + " rejected before module requests"); }
+await Bad(Manifest("1.0.1") with { Product="Electron" },"wrong product");
+await Bad(Manifest("1.0.1") with { Api=99 },"wrong API");
+await Bad(Manifest("1.0.1") with { Modules=[Asset("1.0.1") with { Id="../escape" }] },"path traversal");
+await Bad(Manifest("1.0.1") with { Modules=[Asset("1.0.1") with { Url="https://evil.invalid/a.dll" }] },"foreign source");
+await Bad(Manifest("1.0.1") with { Modules=[Asset("1.0.1"),Asset("1.0.1")] },"duplicate module");
+await Bad(Manifest("1.0.1") with { Modules=[Asset("1.0.1") with { Size=long.MaxValue }] },"unbounded package size");
+await Bad(Manifest("1.0.1") with { Modules=[Asset("1.0.1") with { AssemblyName="../escape" }] },"assembly filename traversal");
+await Bad(Manifest("1.0.1") with { Modules=[Asset("1.0.1") with { Files=[new("engine","pdfcraft-cli.exe",new ReleaseSource("1.0.1").AssetPrefix+"Distribution.Checks-1.0.0-pdfcraft-cli.exe",100,new string('A',64))] }] },"untrusted or incomplete engine package");
+Feed(Manifest("1.0.1")); handler.Map[Asset("1.0.1").Url] = new byte[payload.Length];
+await Reject(()=>empty.PrepareAsync(new("1.0.1")),"hash mismatch");
+Feed(Manifest("1.0.1") with { Modules=[Asset("1.0.1","Wrong.Identity")] });
+await Reject(()=>empty.PrepareAsync(new("1.0.1")),"managed assembly identity mismatch despite matching hash");
+Feed(Manifest("1.0.1")); handler.Map[Asset("1.0.1").Url] = new byte[payload.Length + 1];
+await Reject(()=>empty.PrepareAsync(new("1.0.1")),"oversized streamed response");
+Feed(Manifest("1.0.1")); handler.Map[new ReleaseSource("1.0.1").ManifestUri.AbsoluteUri] = Encoding.UTF8.GetBytes("{\"product\":\"A\",\"product\":\"B\"}");
+handler.Map[new ReleaseSource("1.0.1").ManifestSignatureUri.AbsoluteUri]=signingKey.SignData(handler.Map[new ReleaseSource("1.0.1").ManifestUri.AbsoluteUri],HashAlgorithmName.SHA256,RSASignaturePadding.Pss);
+await Reject(()=>empty.PrepareAsync(new("1.0.1")),"duplicate JSON key");
+File.WriteAllText(Path.Combine(first.Candidate!.DirectoryPath,"unknown.txt"),"keep");
+await service.ActivateAsync(second.Candidate!);
+Check(File.Exists(Path.Combine(first.Candidate.DirectoryPath,"unknown.txt")),"unknown files preserved");
+Feed(Manifest("1.0.3"));
+using (var midCancel = new CancellationTokenSource())
+{
+    var sink = new ProgressSink(p => { if (p.Stage == "Reusing") midCancel.Cancel(); });
+    await Reject(()=>service.PrepareAsync(new("1.0.3"),sink,midCancel.Token),"mid-stage cancellation");
+    Check((await service.GetActiveAsync())!.Manifest.Version == "1.0.2","cancelled stage preserves active version");
+}
+Feed(Manifest("1.0.3")); handler.Map.Remove(new ReleaseSource("1.0.3").ManifestUri.AbsoluteUri);
+Check((await service.PrepareAsync(new("1.0.3"))).Status == "Offline","HTTP failure clearly returns offline active cache");
+Check(stages.Contains("Checking") && stages.Contains("Downloading") && stages.Contains("Verified") && stages.Contains("Ready"),"detailed progress events");
+File.WriteAllBytes(Path.Combine(second.Candidate!.DirectoryPath,"Distribution.Checks.dll"),new byte[payload.Length]); handler.Offline = true;
+await Reject(()=>service.PrepareAsync(new("1.0.2")),"corrupt cache rejected even offline");
+handler.Offline = false;
+var changed = new ModuleDistributionService(http,Path.Combine(home,"changed"),manifestSignaturePolicy:signingPolicy); Feed(Manifest("1.0.1"));
+await changed.ActivateAsync((await changed.PrepareAsync(new("1.0.1"))).Candidate!);
+var updatedBytes = File.ReadAllBytes(Path.Combine(home,"fixture-v2","Distribution.Checks.dll"));
+var updated = Asset("1.0.2") with { Version="1.0.1", Url=new ReleaseSource("1.0.2").AssetPrefix+"Distribution.Checks-1.0.1.dll", Size=updatedBytes.Length, Sha256=Convert.ToHexString(SHA256.HashData(updatedBytes)) };
+Feed(Manifest("1.0.2") with { Modules=[updated] }); handler.Map[updated.Url]=updatedBytes;
+var updateProgress = new List<DistributionProgress>();
+var changedResult = await changed.PrepareAsync(new("1.0.2"),new ProgressSink(updateProgress.Add));
+Check(updateProgress.Single(p=>p.Stage=="Plan") is { PlannedVersion:"1.0.1", InstalledVersion:"1.0.0", ChangeKind:"Update" },"changed module reports actual installed and planned versions");
+Check(updateProgress.Where(p=>p.ModuleId is not null).All(p=>p.InstalledVersion=="1.0.0" && p.PlannedVersion=="1.0.1"),"verified stage never pretends planned module was already activated");
+Check(updateProgress.Last().Bytes==updatedBytes.Length && updateProgress.Last().TotalBytes==updatedBytes.Length && updateProgress.All(p=>!p.Detail.Contains("https://")),"cumulative payload byte totals and human detail exclude raw feed URLs");
+var legacyProgress = new DistributionProgress("Example",null,0,0,"detail");
+var (legacyStage,legacyId,legacyBytes,legacyTotal,legacyDetail) = legacyProgress;
+Check(legacyStage=="Example" && legacyProgress.PlannedVersion is null,"legacy five-field constructor and deconstruction preserved");
+Check(handler.Requests.Count == 3 && changedResult.Candidate!.Manifest.Modules[0].Version == "1.0.1","changed module version downloads new independent DLL");
+await changed.ActivateAsync(changedResult.Candidate!);
+Check((await changed.GetActiveAsync())!.Manifest.Modules[0].Version == "1.0.1","updated assembly identity reverified after activation");
+Check((await changed.RollbackAsync()).Manifest.Modules[0].Version == "1.0.0","rollback preserves original DLL bytes/version");
+var lifecycle = new ModuleDistributionService(http,Path.Combine(home,"lifecycle"),manifestSignaturePolicy:signingPolicy); Feed(Manifest("1.0.1"));
+var initialLifecycle = (await lifecycle.PrepareAsync(new("1.0.1"))).Candidate!;
+await lifecycle.RestoreActiveAsync(initialLifecycle,null);
+Check(await lifecycle.GetActiveAsync() is null,"compensation before first commit is safe no-op");
+await lifecycle.ActivateAsync(initialLifecycle);
+await lifecycle.RestoreActiveAsync(initialLifecycle,null);
+Check(await lifecycle.GetActiveAsync() is null,"first-install compensation restores null active pointer");
+await lifecycle.ActivateAsync(initialLifecycle);
+Feed(Manifest("1.0.2") with { Modules=[updated] }); handler.Map[updated.Url]=updatedBytes;
+var nextLifecycle = (await lifecycle.PrepareAsync(new("1.0.2"))).Candidate!;
+await lifecycle.ActivateAsync(nextLifecycle);
+await lifecycle.RestoreActiveAsync(nextLifecycle,initialLifecycle);
+Check((await lifecycle.GetActiveAsync())!.DirectoryName == initialLifecycle.DirectoryName,"runtime-switch compensation restores exact verified predecessor");
+await Reject(()=>lifecycle.RestoreActiveAsync(nextLifecycle,null),"stale compensation cannot overwrite another active pointer");
+Feed(Manifest("1.0.1")); await Reject(()=>lifecycle.PrepareAsync(new("1.0.1")),"compensation preserves accepted-release high-water mark");
+await Reject(()=>{ _ = new ModuleDistributionService(http,Path.Combine(home,"unsigned-default")); return Task.CompletedTask; },"no verification trust key fails closed by default");
+using(var weakKey=RSA.Create(2048)) await Reject(()=>{ _ = new ManifestSignaturePolicy(weakKey.ExportSubjectPublicKeyInfoPem()); return Task.CompletedTask; },"weak non3072 trust key rejected");
+using(var wrongKey=RSA.Create(3072))
+{
+    var wrongService=new ModuleDistributionService(http,Path.Combine(home,"wrong-key"),manifestSignaturePolicy:new ManifestSignaturePolicy(wrongKey.ExportSubjectPublicKeyInfoPem()));
+    Feed(Manifest("1.0.1")); await Reject(()=>wrongService.PrepareAsync(new("1.0.1")),"signature under wrong product key rejected before module download");
+    Check(handler.Requests.Count==2,"wrong-key signature never fetches payload DLL");
+}
+var signedService=new ModuleDistributionService(http,Path.Combine(home,"signed-exact"),manifestSignaturePolicy:signingPolicy);
+Feed(Manifest("1.0.1"));
+var manifestUrl=new ReleaseSource("1.0.1").ManifestUri.AbsoluteUri;
+var signatureUrl=new ReleaseSource("1.0.1").ManifestSignatureUri.AbsoluteUri;
+handler.Map[manifestUrl]=Encoding.UTF8.GetBytes(" \n"+Encoding.UTF8.GetString(handler.Map[manifestUrl])+"\n");
+handler.Map[signatureUrl]=signingKey.SignData(handler.Map[manifestUrl],HashAlgorithmName.SHA256,RSASignaturePadding.Pss);
+var signedCandidate=(await signedService.PrepareAsync(new("1.0.1"))).Candidate!;
+await signedService.ActivateAsync(signedCandidate);
+Check(File.ReadAllBytes(Path.Combine(signedCandidate.DirectoryPath,"manifest.json")).SequenceEqual(handler.Map[manifestUrl]),"cached manifest preserves exact signed bytes including whitespace");
+handler.Offline=true;
+Check((await signedService.PrepareAsync(new("1.0.1"))).Status=="Offline","offline fallback revalidates mandatory signed cached manifest");
+handler.Offline=false; Feed(Manifest("1.0.1")); handler.Map.Remove(signatureUrl);
+await Reject(()=>signedService.PrepareAsync(new("1.0.1")),"missing remote signature fails closed even with usable active cache");
+Feed(Manifest("1.0.1")); handler.Map[manifestUrl]=Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(handler.Map[manifestUrl])+" ");
+await Reject(()=>signedService.PrepareAsync(new("1.0.1")),"remote exact-byte manifest tampering rejected");
+Feed(Manifest("1.0.1")); handler.Map[signatureUrl]=signingKey.SignData(handler.Map[manifestUrl],HashAlgorithmName.SHA256,RSASignaturePadding.Pkcs1);
+await Reject(()=>signedService.PrepareAsync(new("1.0.1")),"PKCS1 signature rejected; RSA-PSS required");
+var cachedSigPath=Path.Combine(signedCandidate.DirectoryPath,"manifest.json.sig");
+var cachedSignature=File.ReadAllBytes(cachedSigPath); File.Delete(cachedSigPath);
+await Reject(()=>signedService.GetActiveAsync(),"missing cached signature rejected");
+File.WriteAllBytes(cachedSigPath,cachedSignature); cachedSignature[0]^=1; File.WriteAllBytes(cachedSigPath,cachedSignature);
+await Reject(()=>signedService.GetActiveAsync(),"tampered cached signature rejected on reopen");
+cachedSignature[0]^=1; File.WriteAllBytes(cachedSigPath,cachedSignature);
+var maliciousPayload=new byte[payload.Length];
+File.WriteAllBytes(Path.Combine(signedCandidate.DirectoryPath,"Distribution.Checks.dll"),maliciousPayload);
+var maliciousManifest=Manifest("1.0.1") with { Modules=[Asset("1.0.1") with { Sha256=Convert.ToHexString(SHA256.HashData(maliciousPayload)) }] };
+File.WriteAllBytes(Path.Combine(signedCandidate.DirectoryPath,"manifest.json"),JsonSerializer.SerializeToUtf8Bytes(maliciousManifest,json));
+await Reject(()=>signedService.GetActiveAsync(),"changing both cached DLL and unsigned manifest hash cannot bypass trusted signature");
+Console.WriteLine($"TOTAL {passed} checks passed; fake HTTP only.");
+
+sealed class ProgressSink(Action<DistributionProgress> action) : IProgress<DistributionProgress> { public void Report(DistributionProgress value)=>action(value); }
+sealed class Fake : HttpMessageHandler
+{
+    public Dictionary<string,byte[]> Map {get;} = new(); public List<string> Requests {get;} = new(); public bool Offline;
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage r,CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested(); if(Offline) throw new HttpRequestException("fixture offline");
+        Requests.Add(r.RequestUri!.AbsoluteUri);
+        return Task.FromResult(new HttpResponseMessage(Map.ContainsKey(r.RequestUri.AbsoluteUri)?HttpStatusCode.OK:HttpStatusCode.NotFound) { RequestMessage=r, Content=new ByteArrayContent(Map.GetValueOrDefault(r.RequestUri.AbsoluteUri)??[]) });
+    }
+}

@@ -1,0 +1,2 @@
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><AssemblyName>PrivateHelper</AssemblyName><EnableDefaultCompileItems>false</EnableDefaultCompileItems><DefineConstants>V2</DefineConstants></PropertyGroup><ItemGroup><Compile Include="../../Helper.cs.txt" /></ItemGroup></Project>
+
