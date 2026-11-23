@@ -156,7 +156,11 @@ public sealed class PdfDocumentService : IWorkspaceHost, IAsyncDisposable
             {
                 case "document.open": await OpenCore(Argument(), ct); break;
                 case "document.select": SelectCore(pages, intent.Argument == null ? null : int.Parse(intent.Argument, CultureInfo.InvariantCulture)); break;
-                case "document.navigate": if (pages.Count != 1) throw new ArgumentException("Navigation needs one page."); Pages(pages); Publish(current: pages[0]); break;
+                case "document.navigate":
+                    if (pages.Count != 1) throw new ArgumentException("Navigation needs one page.");
+                    Pages(pages);
+                    Publish(current: pages[0], selection: Document.SelectedPages.Count <= 1 ? [pages[0]] : null);
+                    break;
                 case "pages.rotate": await ModifyCore(PdfOperationKind.Rotate, pages, null, intent.Argument == null ? 90 : int.Parse(intent.Argument, CultureInfo.InvariantCulture), ct); break;
                 case "pages.delete": await ModifyCore(PdfOperationKind.Delete, pages, null, 90, ct); break;
                 case "pages.reorder":

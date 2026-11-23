@@ -44,6 +44,7 @@ public sealed class StartupOpenWindow : Window
         FontFamily = new FontFamily("Malgun Gothic"); FontSize = 13;
         Background = new SolidColorBrush(Color.FromRgb(245, 247, 249));
         Content = Panel;
+        AllowDrop = true;
         KeyboardNavigation.SetTabNavigation(this, KeyboardNavigationMode.Cycle);
         Panel.RowDefinitions.Add(new() { Height = GridLength.Auto });
         Panel.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
@@ -59,6 +60,15 @@ public sealed class StartupOpenWindow : Window
         var left = new StackPanel { Margin = new Thickness(20), VerticalAlignment = VerticalAlignment.Center };
         left.Children.Add(new TextBlock { Text = "내 PC의 PDF", FontSize = 18, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 12) });
         left.Children.Add(BrowseButton);
+        left.Children.Add(new TextBlock
+        {
+            Text = "또는 여기에 PDF 파일을 끌어다 놓으세요",
+            Foreground = new SolidColorBrush(Color.FromRgb(95, 106, 120)),
+            FontSize = 12,
+            TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 10, 0, 0)
+        });
         var leftCard = Card(left); columns.Children.Add(leftCard);
         var right = new Grid(); right.RowDefinitions.Add(new() { Height = GridLength.Auto }); right.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) }); right.RowDefinitions.Add(new() { Height = GridLength.Auto });
         right.Children.Add(new TextBlock { Text = "최근 파일", FontSize = 16, FontWeight = FontWeights.SemiBold, Margin = new Thickness(16, 14, 16, 10) });
@@ -71,6 +81,14 @@ public sealed class StartupOpenWindow : Window
         ScrollViewer.SetHorizontalScrollBarVisibility(RecentList, ScrollBarVisibility.Disabled);
         ScrollViewer.SetVerticalScrollBarVisibility(RecentList, ScrollBarVisibility.Auto);
         BrowseButton.Click += (_, _) => Browse();
+        DragEnter += (_, e) => HandleDrag(e);
+        PreviewDragOver += (_, e) => HandleDrag(e);
+        Drop += (_, e) =>
+        {
+            var files = e.Data.GetDataPresent(DataFormats.FileDrop) ? e.Data.GetData(DataFormats.FileDrop) as string[] : null;
+            TryDropFiles(files);
+            e.Handled = true;
+        };
         CancelButton.Click += (_, _) => { if (showingModal) DialogResult = false; else Close(); };
         RecentList.PreviewKeyDown += (_, e) =>
         {
@@ -100,6 +118,24 @@ public sealed class StartupOpenWindow : Window
         Status.Text = Model.Message ?? "";
         if (success && showingModal) DialogResult = true;
         return success;
+    }
+    private static string? FindFirstPdfPath(string[]? files) =>
+        files?.FirstOrDefault(f => !string.IsNullOrWhiteSpace(f) && System.IO.Path.GetExtension(f).Equals(".pdf", StringComparison.OrdinalIgnoreCase));
+    private void HandleDrag(DragEventArgs e)
+    {
+        var files = e.Data.GetDataPresent(DataFormats.FileDrop) ? e.Data.GetData(DataFormats.FileDrop) as string[] : null;
+        e.Effects = FindFirstPdfPath(files) is not null ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+    internal bool TryDropFiles(string[]? files)
+    {
+        var pdfPath = FindFirstPdfPath(files);
+        if (pdfPath is null)
+        {
+            Status.Text = "PDF 파일(.pdf)만 열 수 있습니다.";
+            return false;
+        }
+        return SelectPath(pdfPath);
     }
     internal void RemoveEntry(string path)
     {

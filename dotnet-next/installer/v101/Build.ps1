@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
  [Parameter(Mandatory)][string]$PublishDirectory,
  [Parameter(Mandatory)][string]$InputManifest,
@@ -9,6 +9,7 @@ param(
  [Parameter(Mandatory)][string]$ProtectedSigningKeyPath,
  [Parameter(Mandatory)][string]$ExpectedPublicKeySha256,
  [string]$AppIconPath=(Join-Path $PSScriptRoot '../../src/Workspace.App/Assets/deojon-pdf-workspace.ico'),
+ [string]$ProductVersion='1.0.2',
  [switch]$DevelopmentNet9
 )
 $ErrorActionPreference='Stop'
@@ -16,6 +17,8 @@ $ErrorActionPreference='Stop'
 . "$PSScriptRoot/PortableLegal.ps1"
 . "$PSScriptRoot/ManifestSigning.ps1"
 # Packaging and detached manifest signing only. Never restore/publish/download/install/Authenticode-sign/launch/upload/tag/commit.
+if($ProductVersion -notmatch '^\d+\.\d+\.\d+$'){throw 'Invalid ProductVersion.'}
+$releaseTag="wpf-v$ProductVersion"
 $publish=SafePath $PublishDirectory;$output=SafePath $OutputDirectory
 if(Test-Path -LiteralPath $output){throw 'OutputDirectory must be new; existing files are never overwritten.'}
 $icon=SafePath $AppIconPath
@@ -30,7 +33,7 @@ foreach($forbidden in @($output,$publish,$sourceRoot)){
 if($ExpectedPublicKeySha256 -notmatch '^[A-Fa-f0-9]{64}$'){throw 'Expected public-key SHA256 required.'}
 $spec=Get-Content -LiteralPath $InputManifest -Raw | ConvertFrom-Json
 $proof=Get-Content -LiteralPath $VerificationJson -Raw | ConvertFrom-Json
-if($spec.product -ne 'PDF-Workspace-WPF' -or $spec.version -ne '1.0.1' -or $spec.api -ne 1){throw 'Incorrect product/version/API.'}
+if($spec.product -ne 'PDF-Workspace-WPF' -or $spec.version -ne $ProductVersion -or $spec.api -ne 1){throw 'Incorrect product/version/API.'}
 if($proof.passed -ne $true -or $proof.inputManifestSha256 -ne (Get-FileHash -LiteralPath $InputManifest).Hash){throw 'Exact input-manifest QA receipt required.'}
 foreach($gate in @('shellOnly','startupOwnedModals','moduleIntegration','backend','offscreen','coreUpdateLease')){if($proof.checks.$gate -ne $true){throw "Missing QA gate: $gate"}}
 $files=@($spec.shellFiles)
@@ -53,7 +56,7 @@ else {
  foreach($r in @('coreclr.dll','hostfxr.dll','hostpolicy.dll','System.Private.CoreLib.dll','PresentationFramework.dll')){if($r -notin $files.path){throw "Missing self-contained runtime file: $r"}}
  if(!($ro.includedFrameworks | Where-Object {$_.name -eq 'Microsoft.WindowsDesktop.App' -and $_.version -like '10.0.*'})){throw 'Missing .NET10 Windows Desktop runtime.'}
 }
-foreach($r in @('Workspace.App.dll','Workspace.Contracts.dll','Workspace.Runtime.dll','Workspace.Desktop.Contracts.dll')){if([Reflection.AssemblyName]::GetAssemblyName((Join-Path $publish $r)).Version.ToString() -ne '1.0.1.0'){throw "Shell contract assembly not 1.0.1.0: $r"}}
+foreach($r in @('Workspace.App.dll','Workspace.Contracts.dll','Workspace.Runtime.dll','Workspace.Desktop.Contracts.dll')){if([Reflection.AssemblyName]::GetAssemblyName((Join-Path $publish $r)).Version.ToString() -ne "$ProductVersion.0"){throw "Shell contract assembly not $ProductVersion.0: $r"}}
 $zip=SafePath $OfficialCliZip
 $zipPin='DCBCC2DDC019D85CCA90A8242D5E4DC380F1FF6BFB6B951A89152D1DBAE14CB4'
 $cliPin='32C94DF8EABB995DE8B24B078BF4D51F84A2CEE8B42C868B660017F7E5BBF8D0'
@@ -65,7 +68,7 @@ $stage=Join-Path $output 'build';$payload=Join-Path $stage 'shell';$assets=Join-
 New-Item -ItemType Directory $payload,$assets | Out-Null
 foreach($f in $files){$target=Join-Path $payload $f.path;New-Item -ItemType Directory (Split-Path $target) -Force | Out-Null;Copy-Item -LiteralPath (Join-Path $publish $f.path) $target;if((Get-FileHash $target).Hash -ne $f.sha256){throw 'Staged shell hash mismatch.'}}
 $spec.shellFiles | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $payload 'shell-files.json') -Encoding utf8
-$prefix='https://github.com/bti0497-gif/PDF-Workspace/releases/download/wpf-v1.0.1/'
+$prefix="https://github.com/bti0497-gif/PDF-Workspace/releases/download/$releaseTag/"
 $modules=[Collections.Generic.List[object]]::new();$ids=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 foreach($m in $spec.modules){
  if($m.id -notmatch '^[A-Za-z][A-Za-z0-9]*(\.[A-Za-z][A-Za-z0-9]*)*$' -or !$ids.Add($m.id)){throw 'Invalid/duplicate module ID.'}
@@ -98,14 +101,14 @@ foreach($name in @('pdfcraft-cli.exe','LICENSE.pdfcraft','NOTICE.pdfcraft')){
  $engine[0].files+= [ordered]@{kind=$(if($name.EndsWith('.exe')){'engine'}else{'notice'});name=$name;url=$prefix+$asset;size=(Get-Item $p).Length;sha256=(Get-FileHash $p).Hash}
 }
 foreach($m in $modules){foreach($a in @($m)+@($m.files)){if($a.size -le 0 -or $a.size -gt 256MB){throw 'Asset exceeds backend size limits.'}}}
-[ordered]@{product='PDF-Workspace-WPF';version='1.0.1';api=1;modules=@($modules.ToArray())} | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $assets 'wpf-modules.json') -Encoding utf8NoBOM
+[ordered]@{product='PDF-Workspace-WPF';version=$ProductVersion;api=1;modules=@($modules.ToArray())} | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $assets 'wpf-modules.json') -Encoding utf8NoBOM
 $manifestSigning=Write-ManifestSignature -ManifestPath (Join-Path $assets 'wpf-modules.json') -ProtectedSigningKeyPath $key -ExpectedPublicKeySha256 $ExpectedPublicKeySha256
 Write-PayloadIncludes $payload $stage
-$exe=Join-Path $assets $(if($DevelopmentNet9){'DeojonPdfWpf-1.0.1-DEVELOPMENT-net9.exe'}else{'더죤 PDF Workspace.exe'})
+$exe=Join-Path $assets $(if($DevelopmentNet9){"DeojonPdfWpf-$ProductVersion-DEVELOPMENT-net9.exe"}else{'더죤 PDF Workspace.exe'})
 & $MakeNsis /NOCONFIG /INPUTCHARSET UTF8 "/DOUTPUT_EXE=$(NsisQuote $exe)" "/DSTAGE=$(NsisQuote $stage)" "/DAPP_ICON=$(NsisQuote $icon)" "$PSScriptRoot/Shell.nsi" 2>&1 | Tee-Object (Join-Path $stage 'compiler.log')
 if($LASTEXITCODE -ne 0 -or !(Test-Path $exe)){throw 'NSIS compilation failed.'}
 $hashes=@(Get-ChildItem $assets -File | Sort-Object Name | ForEach-Object {[ordered]@{name=$_.Name;size=$_.Length;sha256=(Get-FileHash $_.FullName).Hash}})
-[ordered]@{product='PDF-Workspace-WPF';version='1.0.1';tag='wpf-v1.0.1';electronLatest=$false;releaseType='parent-decides';displayName='더죤 PDF Workspace';installerIconSha256=(Get-FileHash -LiteralPath $icon).Hash;formalReleaseEligible=(!$DevelopmentNet9);coreUpgradeSupported=$true;existingInstallPolicy='Journaled directory switch; verified backup retained; unchanged owned manifest and app lease required';manifestSigning=$manifestSigning;installerSignature=(Get-AuthenticodeSignature $exe).Status.ToString();inputManifestSha256=(Get-FileHash $InputManifest).Hash;verificationSha256=(Get-FileHash $VerificationJson).Hash;cliZipSha256=$zipPin;cliSha256=$cliPin;legalInputs=$legal;assets=$hashes;installed=$false;published=$false} | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $output 'receipt.json') -Encoding utf8
+[ordered]@{product='PDF-Workspace-WPF';version=$ProductVersion;tag=$releaseTag;electronLatest=$false;releaseType='parent-decides';displayName='더죤 PDF Workspace';installerIconSha256=(Get-FileHash -LiteralPath $icon).Hash;formalReleaseEligible=(!$DevelopmentNet9);coreUpgradeSupported=$true;existingInstallPolicy='Journaled directory switch; verified backup retained; unchanged owned manifest and app lease required';manifestSigning=$manifestSigning;installerSignature=(Get-AuthenticodeSignature $exe).Status.ToString();inputManifestSha256=(Get-FileHash $InputManifest).Hash;verificationSha256=(Get-FileHash $VerificationJson).Hash;cliZipSha256=$zipPin;cliSha256=$cliPin;legalInputs=$legal;assets=$hashes;installed=$false;published=$false} | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $output 'receipt.json') -Encoding utf8
 Write-Output "Built only: $exe. Detached manifest signed. No install, upload or Authenticode signing performed."
 
 

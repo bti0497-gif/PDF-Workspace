@@ -89,6 +89,7 @@ public sealed class SidebarView : UserControl, IDisposable
     private void ApplyDocument(DocumentSnapshot next)
     {
         if (disposed) return;
+        var pageChanged = next.CurrentPage != document.CurrentPage;
         var rebuild = next.DocumentId != document.DocumentId || next.ContentVersion != document.ContentVersion || next.PageCount != document.PageCount;
         document = next;
         if (rebuild)
@@ -99,6 +100,8 @@ public sealed class SidebarView : UserControl, IDisposable
             ResizeCards(); previews.Reset(next); Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(PrioritizeVisible));
         }
         PaintSelection();
+        if (!rebuild && pageChanged && !dragging && !applyingSize && !restoringScroll && next.CurrentPage >= 1 && next.CurrentPage <= borders.Count)
+            borders[next.CurrentPage - 1].BringIntoView();
     }
     private void AddCard(int page)
     {
@@ -132,6 +135,7 @@ public sealed class SidebarView : UserControl, IDisposable
         QueueViewportRestore(); applyingSize = true;
         try
         {
+            surface.MinHeight = Math.Max(0, scroll.ViewportHeight);
             var viewport = scroll.ViewportWidth > 0 ? scroll.ViewportWidth : Math.Max(170,ActualWidth)-18;
             var available = Math.Max(1,viewport-24); var columns = Math.Max(1,(int)(available/(size.Value+30)));
             var width = Math.Max(1,Math.Min(size.Value*1.2,available/columns-30));
@@ -212,6 +216,7 @@ public sealed class SidebarView : UserControl, IDisposable
         else { selected.Clear(); selected.Add(page); anchor = page; }
         await SelectPagesAsync(selected.Order().ToArray(), !control && !shift ? page : null);
     }
+    public Task ClearSelectionAsync() => SelectPagesAsync(Array.Empty<int>());
     private Task SelectPagesAsync(int[] pages, int? current = null) => SendAsync("document.select", pages, current?.ToString(CultureInfo.InvariantCulture));
     public Task DispatchActionAsync(string command, string? argument = null) => SendAsync(command, document.SelectedPages.ToArray(), argument);
     private async Task SendAsync(string command, IReadOnlyList<int> pages, string? argument)
@@ -254,11 +259,13 @@ public sealed class SidebarView : UserControl, IDisposable
     private async Task FinishGesture(Point point)
     {
         if (pressed == -2) return;
-        var page=pressed+1; var wasDragging=dragging; var slot=insertion; var mods=modifiers; var regionSelection=marqueeSelection; var onCard=page>0 && CardBounds[page-1].Contains(point);
+        var pressedIndex = pressed; var page=pressed+1; var wasDragging=dragging; var slot=insertion; var mods=modifiers; var regionSelection=marqueeSelection; var onCard=page>0 && CardBounds[page-1].Contains(point);
         CancelGesture();
         if (wasDragging && page>0 && slot>=0) { if (!document.SelectedPages.Contains(page)) await SelectThumbnailAsync(page); await MoveSelectedAsync(slot); }
         else if (wasDragging && regionSelection!=null) await SelectPagesAsync(regionSelection);
         else if (!wasDragging && onCard) await SelectThumbnailAsync(page,mods.HasFlag(ModifierKeys.Control),mods.HasFlag(ModifierKeys.Shift));
+        else if (!wasDragging && pressedIndex < 0 && !mods.HasFlag(ModifierKeys.Control) && !mods.HasFlag(ModifierKeys.Shift) && document.SelectedPages.Count > 0)
+            await SelectPagesAsync(Array.Empty<int>());
     }
     private void CancelGesture()
     { pressed=-2; dragging=false; insertion=-1; marqueeSelection=null; dragTimer.Stop(); marker.Visibility=marquee.Visibility=Visibility.Collapsed; if (surface.IsMouseCaptured) surface.ReleaseMouseCapture(); PaintSelection(); }

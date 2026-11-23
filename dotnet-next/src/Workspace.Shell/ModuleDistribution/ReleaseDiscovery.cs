@@ -72,7 +72,7 @@ public sealed class ReleaseDiscovery
                 int pageNumber = pagesRead + 1;
                 using var request = new HttpRequestMessage(HttpMethod.Get, next);
                 request.Headers.Accept.ParseAdd("application/vnd.github+json");
-                request.Headers.UserAgent.ParseAdd("PDF-Workspace-WPF/1.0.1");
+                request.Headers.UserAgent.ParseAdd("PDF-Workspace-WPF/1.0.2");
                 request.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
                 using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
                 if (response.RequestMessage?.RequestUri is { } actual && actual != next)

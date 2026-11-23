@@ -47,6 +47,10 @@ internal static class Program
             host.Publish(host.Document with {CanUndo=false,CanRedo=true,SelectedPages=new[]{1,2,3,4,5}});
             Check(!view.CanExecute("pages.delete") && !view.CanExecute("document.undo") && view.CanExecute("document.redo"),"event refresh updates all-page and history guards");
                         Wait(view.Actions["document.redo"].ExecuteAsync()); Check(host.Intents.Last().CommandId=="document.redo","redo bound action dispatch");
+            view.SelectCategory("home"); Layout(view,640,174);
+            var homeTags=Descendants<Button>(view).Select(b=>b.Tag as string).ToArray();
+            Check(!homeTags.Contains("document.open") && !homeTags.Contains("document.save"),"home tab omits duplicate open/save");
+            Check(homeTags.Contains("document.undo") && homeTags.Contains("document.redo") && homeTags.Contains("pages.rotate") && homeTags.Contains("pages.delete"),"home tab retains edit and page tools");
             view.SelectCategory("document"); Layout(view,640,174);
             var rotateButton=Descendants<Button>(view).Single(b=>Equals(b.Tag,"pages.rotate"));
             Check(rotateButton.Width==78 && rotateButton.Height==70,"approved 78x70 action card geometry");

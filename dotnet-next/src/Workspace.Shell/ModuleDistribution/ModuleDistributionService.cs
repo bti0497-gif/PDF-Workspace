@@ -45,7 +45,7 @@ public sealed class DistributionException(string message, Exception? inner = nul
 public sealed partial class ModuleDistributionService
 {
     public const string Product = "PDF-Workspace-WPF";
-    public const string ShellVersion = "1.0.1";
+    public const string ShellVersion = "1.0.2";
     public const int SupportedApi = 1;
     private const long MaxAsset = 256L * 1024 * 1024, MaxTotal = 1024L * 1024 * 1024;
     private const int MaxManifest = 128 * 1024;
@@ -107,7 +107,7 @@ public sealed partial class ModuleDistributionService
         }
         if (state is not null && ParseVersion(manifest.Version) < ParseVersion(state.HighestVersion))
             throw new DistributionException("Release downgrade rejected.");
-        var baseline = state is null ? active : await ReadCandidate(state.HighestDirectory, cancellationToken);
+        var baseline = state is null ? active : state.HighestDirectory == active?.DirectoryName ? active : await ReadCandidate(state.HighestDirectory, cancellationToken);
         if (baseline is not null && manifest.Version == baseline.Manifest.Version && !Equivalent(manifest, baseline.Manifest))
             throw new DistributionException("Previously activated release was mutated.");
         if (baseline is not null)

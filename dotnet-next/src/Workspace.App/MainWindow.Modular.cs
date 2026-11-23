@@ -47,36 +47,81 @@ public partial class MainWindow
     internal async Task StartModularAsync(Func<IProgress<DistributionProgress>, CancellationToken, Task<PreparedModuleUpdate>> prepare, string? initialPath = null)
     {
         prepareModules=prepare;
-        var setup = new ModuleSetupWindow(this, new(Array.Empty<ModuleSetupItem>(), "필수 기능을 확인하고 있습니다.")) { AutoContinueOnSuccess=true,Title=ProductBrand.DialogTitle("필수 기능 설치") };
+        StatusText.Text = "설치된 기능 버전을 확인하고 있습니다…";
+        var progressModel = new ModuleSetupProgress();
+        ModuleSetupWindow? setup = null;
         CancellationTokenSource? cancellation = null;
-        bool running = false;
+        bool running = false, needsSetupUi = false, setupOpened = false;
+        var initialAttemptDone = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        void ReportSnapshot(ModuleSetupSnapshot snapshot) => setup?.Report(snapshot);
+
+        void EnsureSetupWindow()
+        {
+            if (setupOpened) return;
+            if (modularExitApproved || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) { cancellation?.Cancel(); initialAttemptDone.TrySetResult(false); return; }
+            setupOpened = true;
+            setup = new ModuleSetupWindow(this, progressModel.Current) { AutoContinueOnSuccess=true, Title=ProductBrand.DialogTitle("필수 기능 설치") };
+            setup.ActionRequested += action => { if (action == ModuleSetupAction.Cancel) cancellation?.Cancel(); else if (action == ModuleSetupAction.Retry) _ = Attempt(); };
+            var outcome = setup.ShowModal();
+            cancellation?.Dispose(); cancellation = null;
+            if (outcome != ModuleSetupAction.Continue) { initialAttemptDone.TrySetResult(false); Close(); return; }
+            initialAttemptDone.TrySetResult(true);
+        }
+
         async Task Attempt()
         {
             if (running) return;
             running = true; cancellation?.Dispose(); cancellation = new();
-            var progressModel = new ModuleSetupProgress();
-            setup.Report(progressModel.Current);
+            progressModel = new ModuleSetupProgress();
+            ReportSnapshot(progressModel.Current);
             try
             {
                 var progress = new InlineProgress<DistributionProgress>(p => {
-                    void Apply()=>setup.Report(progressModel.Apply(p));
+                    if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+                    void Apply()
+                    {
+                        var snapshot = progressModel.Apply(p);
+                        if (!needsSetupUi && (p.Stage == "Downloading" || p.ChangeKind is "Install" or "Update"))
+                        {
+                            needsSetupUi = true;
+                            _ = Dispatcher.BeginInvoke(new Action(EnsureSetupWindow));
+                        }
+                        ReportSnapshot(snapshot);
+                    }
                     if(Dispatcher.CheckAccess())Apply();else Dispatcher.Invoke(Apply);
-                });                var update = await prepare(progress, cancellation.Token);
+                });
+                var update = await prepare(progress, cancellation.Token);
                 var candidate=update.Candidate;
                 cancellation.Token.ThrowIfCancellationRequested();
                 progressModel.SetCandidatePlan(candidate,update.PreviousActive);
-                setup.Report(progressModel.Attaching());
-                await ActivatePreparedModulesAsync(update,cancellation.Token,()=>setup.Report(progressModel.Attached()));
-                setup.Report(progressModel.Completed());
+                ReportSnapshot(progressModel.Attaching());
+                await ActivatePreparedModulesAsync(update,cancellation.Token,()=>ReportSnapshot(progressModel.Attached()));
+                ReportSnapshot(progressModel.Completed());
+                if (!needsSetupUi)
+                {
+                    cancellation.Dispose(); cancellation = null;
+                    initialAttemptDone.TrySetResult(true);
+                }
             }
-            catch (OperationCanceledException ex) { setup.Report(progressModel.Failed(ex)); }
-            catch (Exception ex) { System.Diagnostics.Trace.TraceError(ex.ToString()); setup.Report(progressModel.Failed(ex)); }
+            catch (OperationCanceledException ex)
+            {
+                var failed = progressModel.Failed(ex);
+                if (!needsSetupUi) { needsSetupUi = true; _ = Dispatcher.BeginInvoke(new Action(EnsureSetupWindow)); }
+                ReportSnapshot(failed);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.TraceError(ex.ToString());
+                var failed = progressModel.Failed(ex);
+                if (!needsSetupUi) { needsSetupUi = true; _ = Dispatcher.BeginInvoke(new Action(EnsureSetupWindow)); }
+                ReportSnapshot(failed);
+            }
             finally { running = false; }
         }
-        setup.ActionRequested += action => { if (action == ModuleSetupAction.Cancel) cancellation?.Cancel(); else if (action == ModuleSetupAction.Retry) _ = Attempt(); };
-        setup.Loaded += (_, _) => _ = Attempt();
-        var outcome = setup.ShowModal(); cancellation?.Dispose();
-        if (outcome != ModuleSetupAction.Continue) { Close(); return; }
+
+        _ = Attempt();
+        if (!await initialAttemptDone.Task) return;
         StartBackgroundUpdates();
         if (initialPath != null) await sharedDocument!.DispatchAsync(new("document.open", Argument:initialPath));
         else await ShowStartupOpenAsync();
@@ -145,6 +190,19 @@ public partial class MainWindow
         try { if(sharedDocument != null && !(await sharedDocument.CloseAsync()).Success) return; await DisposeModularAsync(); modularExitApproved=true; _ = Dispatcher.BeginInvoke(Close); }
         finally { confirmingExit=false; modularBusy=false; }
     }
+    internal static string DefaultExtractFileName(string? displayName, IReadOnlyList<int>? pages)
+    {
+        var baseName = Path.GetFileNameWithoutExtension(displayName);
+        if (string.IsNullOrWhiteSpace(baseName)) baseName = "문서";
+        var ordered = (pages ?? Array.Empty<int>()).Where(p => p >= 1).Distinct().Order().ToArray();
+        if (ordered.Length == 0) return $"{baseName}_추출.pdf";
+        if (ordered.Length == 1) return $"{baseName}_{ordered[0]}페이지.pdf";
+        if (ordered[^1] - ordered[0] + 1 == ordered.Length)
+            return $"{baseName}_{ordered[0]}-{ordered[^1]}페이지.pdf";
+        if (ordered.Length <= 5)
+            return $"{baseName}_{string.Join(",", ordered)}페이지.pdf";
+        return $"{baseName}_{ordered[0]}-{ordered[^1]}({ordered.Length}쪽)페이지.pdf";
+    }
     internal Task DisposeForChecksAsync()=>DisposeModularAsync();
     private async Task DisposeModularAsync()
     {
@@ -211,7 +269,8 @@ public partial class MainWindow
                     case "document.saveAs": result=await SaveAsync(true,intent.Argument,ct); break;
                     case "document.close": result=await CloseAsync(); break;
                     case "pages.extract" when intent.Argument==null:
-                        var output=new SaveFileDialog { Filter="PDF 문서 (*.pdf)|*.pdf",DefaultExt=".pdf",OverwritePrompt=true };
+                        var extractFileName=DefaultExtractFileName(Document.DisplayName, intent.Pages ?? Document.SelectedPages);
+                        var output=new SaveFileDialog { Filter="PDF 문서 (*.pdf)|*.pdf",DefaultExt=".pdf",FileName=extractFileName,OverwritePrompt=true };
                         if(output.ShowDialog(owner)!=true)return new(false,"취소했습니다.");
                         result=await engine.DispatchAsync(Current("pages.extract",output.FileName) with { Pages=intent.Pages },ct); break;
                     case "document.merge" when intent.Argument==null:

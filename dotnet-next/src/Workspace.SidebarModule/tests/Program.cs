@@ -28,6 +28,14 @@ internal static class Program
             Wait(view.SelectThumbnailAsync(11,true,true)); Check(host.Document.SelectedPages.SequenceEqual(Enumerable.Range(5,7)),"ctrl shift union");
             Wait(view.SelectThumbnailAsync(6,true)); Check(!host.Document.SelectedPages.Contains(6),"ctrl toggle");
             var painted=Descendants<Border>(view).Where(x=>x.BorderBrush==Brushes.SteelBlue).Count(); Check(painted==host.Document.SelectedPages.Count,"host-confirmed visible selection");
+            Wait(view.ClearSelectionAsync());
+            Check(host.Document.SelectedPages.Count==0,"clear selection empties selected pages");
+            Check(Descendants<Border>(view).All(x=>x.BorderBrush!=Brushes.SteelBlue),"clear selection unhighlights all borders");
+            Wait(view.SelectThumbnailAsync(3)); Check(host.Document.SelectedPages.SequenceEqual(new[]{3}),"re-selection after clear");
+            host.SimulateNavigate(95); Pump();
+            Check(Descendants<Border>(view).Where(x=>x.BorderBrush==Brushes.SteelBlue).Count()==1,"external navigate updates sidebar highlight");
+            var card95=view.CardBounds[94];
+            Check(card95.Bottom>Descendants<ScrollViewer>(view).Single().VerticalOffset && card95.Top<Descendants<ScrollViewer>(view).Single().VerticalOffset+Descendants<ScrollViewer>(view).Single().ViewportHeight,"external navigate brings thumbnail card into view");
             view.SetThumbnailSize(1); Layout(view,510); Check(view.ThumbnailSize==64,"minimum size clamp");
             view.SetThumbnailSize(999); Layout(view,510); Check(view.ThumbnailSize==220,"maximum size clamp");
             view.SetThumbnailSize(112); Layout(view,510); rects=view.CardBounds;
@@ -48,6 +56,10 @@ internal static class Program
             var image = new RenderTargetBitmap(510,700,96,96,PixelFormats.Pbgra32); image.Render(view); var encoder=new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(image)); using(var output=File.Create(Path.Combine(AppContext.BaseDirectory,"sidebar-offscreen.png"))) encoder.Save(output);
             host.Delay=150; host.Switch(129); Until(()=>host.Active>0,2000); var old=host.Document.DocumentId;
             host.Switch(3); Until(()=>view.ReadyPreviewCount==3,10000); Check(view.CardBounds.Count==3 && view.ReadyPreviewCount==3,"stale document results cannot replace new document"); Check(host.Cancelled>0,"old document render cancelled");
+            Layout(view,510);
+            var surfaceViewer=Descendants<ScrollViewer>(view).Single();
+            var selectionSurface=Descendants<Grid>(view).First(g=>System.Windows.Automation.AutomationProperties.GetAutomationId(g)=="ThumbnailSelectionSurface");
+            Check(selectionSurface.MinHeight>=surfaceViewer.ViewportHeight && surfaceViewer.ViewportHeight>0,"selection surface fills visible scroll viewport height");
             host.Delay=5; host.FailPage=2; host.Switch(3); Until(()=>view.FailureCount==1 && view.ReadyPreviewCount==2,5000); Check(view.FailureCount==1,"render failure visible");
             host.FailPage=0; var retry=Descendants<Button>(view).First(b=>b.Visibility==Visibility.Visible && b.Content is string s && s.Contains("재시도")); retry.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Until(()=>view.ReadyPreviewCount==3,5000); Check(view.FailureCount==0,"failed preview retry recovers");
@@ -129,6 +141,7 @@ internal sealed class FakeHost : IWorkspaceHost
         var encoder=new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap)); using var stream=new MemoryStream(); encoder.Save(stream); png=stream.ToArray();
     }
     public void Switch(int count) { Document=new(Guid.NewGuid(),"new.pdf",count,1,new[]{1},false,Document.Version+1,Document.ContentVersion+1); changed?.Invoke(this,new(Document)); }
+    public void SimulateNavigate(int page) { Document=Document with { CurrentPage=page, SelectedPages=Document.SelectedPages.Count<=1?new[]{page}:Document.SelectedPages, Version=Document.Version+1 }; changed?.Invoke(this,new(Document)); }
     public Task<CommandResult> DispatchAsync(WorkspaceIntent intent,CancellationToken cancellationToken=default)
     {
         if(intent.DocumentId!=Document.DocumentId || intent.ExpectedVersion!=Document.Version) return Task.FromResult(new CommandResult(false,"stale"));

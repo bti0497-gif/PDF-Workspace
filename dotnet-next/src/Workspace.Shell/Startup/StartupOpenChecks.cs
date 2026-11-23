@@ -67,6 +67,10 @@ internal static class StartupOpenChecks
             dialog.Browse(); Check(picker.LastOwner == dialog && dialog.SelectedPath == document, "injected picker is modal-owned and selects real path");
             Check(fakeStore.RecordCount == 0, "selection does not falsely record successful document decoding");
             Check(!dialog.SelectPath(missing) && !string.IsNullOrWhiteSpace(dialog.Status.Text), "missing recent shows actionable error");
+            Check(dialog.AllowDrop, "drag and drop enabled on startup window");
+            Check(!dialog.TryDropFiles(new[] { text }) && dialog.Status.Text == "PDF 파일(.pdf)만 열 수 있습니다.", "dropping non-PDF shows actionable error");
+            Check(!dialog.TryDropFiles(null) && dialog.Status.Text == "PDF 파일(.pdf)만 열 수 있습니다.", "dropping empty or null files rejected safely");
+            Check(dialog.TryDropFiles(new[] { text, document }) && dialog.SelectedPath == document, "dropping PDF selects first PDF path");
             dialog.RemoveEntry(missing); Check(fakeStore.Read().Entries.Count == 1 && File.Exists(document), "UI removal only removes history entry");
             foreach (var size in new[] { new Size(644, 391), new Size(834, 501), new Size(1184, 721) })
             {
