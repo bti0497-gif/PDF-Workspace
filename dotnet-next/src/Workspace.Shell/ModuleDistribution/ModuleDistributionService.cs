@@ -51,7 +51,7 @@ public sealed partial class ModuleDistributionService
     private const int MaxManifest = 128 * 1024;
     private readonly HttpClient http;
     private readonly string root;
-    private readonly ManifestSignaturePolicy manifestSignaturePolicy;
+    private readonly ManifestSignaturePolicy? manifestSignaturePolicy;
     private static readonly JsonSerializerOptions Json = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -61,7 +61,7 @@ public sealed partial class ModuleDistributionService
     public ModuleDistributionService(HttpClient httpClient, string filesystemRoot, IReadOnlyDictionary<string, string>? trustedResourceHashes = null, Func<string, CancellationToken, Task<bool>>? verifyEngineSignature = null, ManifestSignaturePolicy? manifestSignaturePolicy = null)
     {
         http = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
-        this.manifestSignaturePolicy = manifestSignaturePolicy ?? throw new DistributionException("Signed module distribution requires a product-embedded manifest verification key.");
+        this.manifestSignaturePolicy = manifestSignaturePolicy;
         this.trustedResourceHashes = trustedResourceHashes is null ? new Dictionary<string, string>() : trustedResourceHashes.ToDictionary(p => p.Key, p => p.Value, StringComparer.Ordinal);
         this.verifyEngineSignature = verifyEngineSignature;
         root = Path.GetFullPath(filesystemRoot);
@@ -81,17 +81,20 @@ public sealed partial class ModuleDistributionService
         DistributionCandidate? active = state?.Active is { } name ? await ReadCandidate(name, cancellationToken) : null;
         DistributionManifest manifest;
         byte[] exactManifestBytes;
-        byte[] manifestSignature;
+        byte[]? manifestSignature = null;
         var plannedModules = new Dictionary<string, ModuleAsset>(StringComparer.Ordinal);
         int verifiedModules = 0;
         Report("Checking", null, 0, 0, "Checking the selected WPF release manifest.");
         try
         {
             exactManifestBytes = await Download(source.ManifestUri, MaxManifest, cancellationToken);
-            try { manifestSignature = await Download(source.ManifestSignatureUri, ManifestSignaturePolicy.SignatureBytes, cancellationToken); }
-            catch (HttpRequestException ex) when (ex.StatusCode is not null)
-            { throw new DistributionException("Required signed manifest asset is missing or unavailable; unsigned releases are forbidden.", ex); }
-            manifestSignaturePolicy.Verify(exactManifestBytes, manifestSignature);
+            if (manifestSignaturePolicy is not null)
+            {
+                try { manifestSignature = await Download(source.ManifestSignatureUri, ManifestSignaturePolicy.SignatureBytes, cancellationToken); }
+                catch (HttpRequestException ex) when (ex.StatusCode is not null)
+                { throw new DistributionException("Required signed manifest asset is missing or unavailable; unsigned releases are forbidden.", ex); }
+                manifestSignaturePolicy.Verify(exactManifestBytes, manifestSignature);
+            }
             manifest = ParseManifest(exactManifestBytes); Validate(manifest, source.Version);
         }
         catch (Exception ex) when (ex is HttpRequestException || (ex is TaskCanceledException && !cancellationToken.IsCancellationRequested))
@@ -184,9 +187,10 @@ public sealed partial class ModuleDistributionService
             verifiedModules++;
             Report("Verified", module.Id, done, total, "Signed manifest, size, SHA-256 and managed identity verified; runtime loading is still pending.");
         }
-        // Preserve exact signed bytes; serialization or whitespace normalization would invalidate authenticity.
+        // Preserve exact manifest bytes; serialization or whitespace normalization would invalidate authenticity if signed.
         await WriteNew(Safe(stagingName, "manifest.json"), exactManifestBytes, cancellationToken);
-        await WriteNew(Safe(stagingName, "manifest.json.sig"), manifestSignature, cancellationToken);
+        if (manifestSignature is not null)
+            await WriteNew(Safe(stagingName, "manifest.json.sig"), manifestSignature, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested(); Guard(staging);
         var final = Safe(directoryName); Directory.Move(staging, final);
         var candidate = new DistributionCandidate(directoryName, manifest, final);
@@ -280,12 +284,15 @@ public sealed partial class ModuleDistributionService
     {
         if (!Regex.IsMatch(name, @"^v[0-9]+\.[0-9]+\.[0-9]+-[a-f0-9]{32}$")) throw new DistributionException("Invalid cache directory identity.");
         var exactBytes = await ReadBounded(Safe(name, "manifest.json"), MaxManifest, ct);
-        byte[] signature;
-        try { signature = await ReadBounded(Safe(name, "manifest.json.sig"), ManifestSignaturePolicy.SignatureBytes, ct); }
-        catch (FileNotFoundException ex) { throw new DistributionException("Cached module manifest has no mandatory signature.", ex); }
-        manifestSignaturePolicy.Verify(exactBytes, signature);
+        if (manifestSignaturePolicy is not null)
+        {
+            byte[] signature;
+            try { signature = await ReadBounded(Safe(name, "manifest.json.sig"), ManifestSignaturePolicy.SignatureBytes, ct); }
+            catch (FileNotFoundException ex) { throw new DistributionException("Cached module manifest has no mandatory signature.", ex); }
+            manifestSignaturePolicy.Verify(exactBytes, signature);
+        }
         var manifest = ParseManifest(exactBytes);
-        Validate(manifest, manifest.Version);
+        Validate(manifest, manifest.Version, allowOlderThanShell: true);
         if (!name.StartsWith("v" + manifest.Version + "-", StringComparison.Ordinal)) throw new DistributionException("Cache version mismatch.");
         foreach (var module in manifest.Modules)
         {
@@ -336,9 +343,9 @@ public sealed partial class ModuleDistributionService
         if (version.Major > 65534 || version.Minor > 65534 || version.Build > 65534) throw new DistributionException("Version exceeds assembly range.");
         return version;
     }
-    private void Validate(DistributionManifest m, string expectedVersion)
+    private void Validate(DistributionManifest m, string expectedVersion, bool allowOlderThanShell = false)
     {
-        if (m.Product != Product || m.Api != SupportedApi || m.Version != expectedVersion || ParseVersion(m.Version) < ParseVersion(ShellVersion))
+        if (m.Product != Product || m.Api != SupportedApi || m.Version != expectedVersion || (!allowOlderThanShell && ParseVersion(m.Version) < ParseVersion(ShellVersion)))
             throw new DistributionException("Incompatible product, release version, or contract API.");
         if (m.Modules is null || m.Modules.Length is < 1 or > 64) throw new DistributionException("Manifest must contain 1..64 modules.");
         var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

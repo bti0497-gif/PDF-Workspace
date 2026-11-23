@@ -10,11 +10,14 @@ OutFile "${OUTPUT_EXE}"
 RequestExecutionLevel user
 InstallDir "$LOCALAPPDATA\Programs\DeojonPdfWpf"
 !define PRODUCT_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\DeojonPdfWpf"
-VIProductVersion "1.0.1.0"
+!ifndef PRODUCT_VERSION
+ !define PRODUCT_VERSION "1.0.1"
+!endif
+VIProductVersion "${PRODUCT_VERSION}.0"
 VIAddVersionKey /LANG=1033 "ProductName" "더죤 PDF Workspace"
 VIAddVersionKey /LANG=1033 "FileDescription" "더죤 PDF Workspace"
-VIAddVersionKey /LANG=1033 "FileVersion" "1.0.1"
-VIAddVersionKey /LANG=1033 "ProductVersion" "1.0.1"
+VIAddVersionKey /LANG=1033 "FileVersion" "${PRODUCT_VERSION}"
+VIAddVersionKey /LANG=1033 "ProductVersion" "${PRODUCT_VERSION}"
 VIAddVersionKey /LANG=1033 "LegalCopyright" "Deojon Environmental Technology"
 SetCompressor /SOLID lzma
 Var FinalDir
@@ -127,7 +130,7 @@ Section "Shell"
 !ifndef FIXTURE
  ${If} $HadInstall == 0
  WriteRegStr HKCU "${PRODUCT_KEY}" "DisplayName" "더죤 PDF Workspace"
- WriteRegStr HKCU "${PRODUCT_KEY}" "DisplayVersion" "1.0.1"
+ WriteRegStr HKCU "${PRODUCT_KEY}" "DisplayVersion" "${PRODUCT_VERSION}"
  WriteRegStr HKCU "${PRODUCT_KEY}" "InstallLocation" "$INSTDIR"
  WriteRegStr HKCU "${PRODUCT_KEY}" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
  WriteRegStr HKCU "${PRODUCT_KEY}" "QuietUninstallString" '$\"$INSTDIR\Uninstall.exe$\" /S'

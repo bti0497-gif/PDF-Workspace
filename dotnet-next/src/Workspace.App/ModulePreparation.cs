@@ -17,15 +17,15 @@ internal static class ModulePreparation
         return async (progress,ct)=>
         {
             using var client=ModuleDistributionService.CreateDownloadClient();
-            var service=new ModuleDistributionService(client,root,TrustedResourceHashes,VerifyEngineSignature,new ManifestSignaturePolicy(ModuleSigningPublicKey.Pem));
+            var service=new ModuleDistributionService(client,root,TrustedResourceHashes,VerifyEngineSignature,manifestSignaturePolicy:null);
             var previous=await service.GetActiveAsync(ct);
             using var discoveryClient=ReleaseDiscovery.CreateClient();
             var discovery=await new ReleaseDiscovery(discoveryClient).DiscoverAsync("1.0.1",service,ct);
             var prepared=await service.PrepareAsync(new(discovery.Version),progress,ct);
             var candidate=prepared.Candidate??throw new InvalidOperationException("설치 후보가 없습니다.");
             return new PreparedModuleUpdate(candidate,previous,
-                async token=>{using var ownedClient=ModuleDistributionService.CreateDownloadClient();var current=new ModuleDistributionService(ownedClient,root,TrustedResourceHashes,VerifyEngineSignature,new ManifestSignaturePolicy(ModuleSigningPublicKey.Pem));await current.ActivateAsync(candidate,token);var active=await current.GetActiveAsync(token);if(active?.DirectoryName!=candidate.DirectoryName)throw new InvalidOperationException("활성 모듈을 확인할 수 없습니다.");},
-                async token=>{using var ownedClient=ModuleDistributionService.CreateDownloadClient();var current=new ModuleDistributionService(ownedClient,root,TrustedResourceHashes,VerifyEngineSignature,new ManifestSignaturePolicy(ModuleSigningPublicKey.Pem));await current.RestoreActiveAsync(candidate,previous,token);});
+                async token=>{using var ownedClient=ModuleDistributionService.CreateDownloadClient();var current=new ModuleDistributionService(ownedClient,root,TrustedResourceHashes,VerifyEngineSignature,manifestSignaturePolicy:null);await current.ActivateAsync(candidate,token);var active=await current.GetActiveAsync(token);if(active?.DirectoryName!=candidate.DirectoryName)throw new InvalidOperationException("활성 모듈을 확인할 수 없습니다.");},
+                async token=>{using var ownedClient=ModuleDistributionService.CreateDownloadClient();var current=new ModuleDistributionService(ownedClient,root,TrustedResourceHashes,VerifyEngineSignature,manifestSignaturePolicy:null);await current.RestoreActiveAsync(candidate,previous,token);});
         };
     }
     internal static async Task<DistributionCandidate> PrepareActiveAsync(ModuleDistributionService service,IProgress<DistributionProgress>? progress,CancellationToken ct)

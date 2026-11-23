@@ -11,9 +11,10 @@ function RelativePath([string]$p) {
 }
 function NsisQuote([string]$p){if($p -match '[\r\n"$]'){throw "Unsupported NSIS characters: $p"};return $p}
 function Write-PayloadIncludes([string]$Payload,[string]$Stage){
+ $PayloadBase=$Payload.TrimEnd('\','/')
  $checks=[Collections.Generic.List[string]]::new();$install=[Collections.Generic.List[string]]::new();$remove=[Collections.Generic.List[string]]::new();$dirs=[Collections.Generic.HashSet[string]]::new()
  foreach($f in Get-ChildItem -LiteralPath $Payload -File -Recurse | Sort-Object FullName){
-  $relative=RelativePath ([IO.Path]::GetRelativePath($Payload,$f.FullName));$dir=Split-Path $relative -Parent
+  $relative=RelativePath ($f.FullName.Substring($PayloadBase.Length+1));$dir=Split-Path $relative -Parent
   $install.Add('SetOutPath "$INSTDIR'+$(if($dir){'\'+$dir}else{''})+'"')
   $install.Add('File "/oname='+(NsisQuote $f.Name)+'" "'+(NsisQuote $f.FullName)+'"')
   if($remove.Count -eq 0){
