@@ -85,7 +85,7 @@ public sealed class RibbonView : UserControl, IWorkspaceRibbonView, IDisposable
         switch(SelectedCategory)
         {
             case "file":
-                Group("파일",Tool("열기",RibbonIcons.Folder,"document.open",88),Tool("저장",RibbonIcons.Save,"document.save",88),Tool("다른 이름으로 저장",RibbonIcons.SaveAs,"document.saveAs",112));
+                Group("파일",Tool("열기",RibbonIcons.Folder,"document.open",88),Tool("저장",RibbonIcons.Save,"document.save",88),Tool("다른 이름으로 저장",RibbonIcons.SaveAs,"document.saveAs",136));
                 Group("작업 공간",Tool("문서 닫기",RibbonIcons.Exit,"document.close",88)); break;
             case "home":
                 Group("편집",Tool("실행 취소",RibbonIcons.Undo,"document.undo"),Tool("다시 실행",RibbonIcons.Redo,"document.redo"));

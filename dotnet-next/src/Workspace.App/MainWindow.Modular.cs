@@ -180,6 +180,7 @@ public partial class MainWindow
                 var started=areaCoordinator.Start(region,Manifest(asset,candidate.Manifest.Api),candidate.DirectoryPath);
                 if(!started.Success)throw new InvalidOperationException(started.Message);
             }
+            if (RibbonScroller.Content is IWorkspaceRibbonView initialRibbon) initialRibbon.SelectCategory("홈");
             if(!modularCommandsBound)
             {
             modularCommandsBound=true;
