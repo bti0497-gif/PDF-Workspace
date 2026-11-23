@@ -10,7 +10,7 @@ param(
  [string]$ProtectedSigningKeyPath,
  [string]$ExpectedPublicKeySha256,
  [string]$AppIconPath=(Join-Path $PSScriptRoot '../../src/Workspace.App/Assets/deojon-pdf-workspace.ico'),
- [string]$ProductVersion='1.0.2',
+ [string]$ProductVersion='1.0.3',
  [switch]$DevelopmentNet9
 )
 $ErrorActionPreference='Stop'

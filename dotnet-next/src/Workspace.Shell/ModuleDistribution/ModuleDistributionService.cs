@@ -45,7 +45,7 @@ public sealed class DistributionException(string message, Exception? inner = nul
 public sealed partial class ModuleDistributionService
 {
     public const string Product = "PDF-Workspace-WPF";
-    public const string ShellVersion = "1.0.2";
+    public const string ShellVersion = "1.0.3";
     public const int SupportedApi = 1;
     private const long MaxAsset = 256L * 1024 * 1024, MaxTotal = 1024L * 1024 * 1024;
     private const int MaxManifest = 128 * 1024;

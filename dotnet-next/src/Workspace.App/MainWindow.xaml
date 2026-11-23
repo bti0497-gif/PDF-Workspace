@@ -23,6 +23,6 @@
 <WrapPanel x:Name="TopTabs"><Button Content="파일" Style="{StaticResource TabButton}"/><Button Content="홈" Style="{StaticResource TabButton}"/><Button Content="기본" Style="{StaticResource TabButton}"/><Button Content="주석" Style="{StaticResource TabButton}"/><Button Content="문서" Style="{StaticResource TabButton}"/><Button Content="보기" Style="{StaticResource TabButton}"/><Button Content="도움말" Style="{StaticResource TabButton}"/></WrapPanel>
 </DockPanel></Border>
 <Border Grid.Row="2" x:Name="RibbonPanel" Background="#F6F6F6" BorderBrush="#C9CDD2" BorderThickness="0,0,0,1"><ScrollViewer x:Name="RibbonScroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" MaxHeight="174" Padding="6,7,6,5"/></Border>
-<Border Grid.Row="6" x:Name="StatusBar" BorderBrush="#D5D8DC" BorderThickness="0,1,0,0" Background="#F9F9F9" Padding="8,5"><DockPanel><TextBlock x:Name="ProductVersionText" DockPanel.Dock="Right" Text="1.0.2" FontSize="11" Foreground="#83878C" Margin="14,0,0,0"/><TextBlock x:Name="StatusText" Foreground="#616973" TextWrapping="Wrap" FontSize="11" MaxHeight="42"/></DockPanel></Border>
+<Border Grid.Row="6" x:Name="StatusBar" BorderBrush="#D5D8DC" BorderThickness="0,1,0,0" Background="#F9F9F9" Padding="8,5"><DockPanel><TextBlock x:Name="ProductVersionText" DockPanel.Dock="Right" Text="1.0.3" FontSize="11" Foreground="#83878C" Margin="14,0,0,0"/><TextBlock x:Name="StatusText" Foreground="#616973" TextWrapping="Wrap" FontSize="11" MaxHeight="42"/></DockPanel></Border>
 </Grid></Window>
 
