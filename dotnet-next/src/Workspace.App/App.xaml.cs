@@ -48,7 +48,7 @@ public partial class App:Application
             Shutdown(2);return;
         }
         var window=new MainWindow();MainWindow=window;window.Show();
-        await window.StartModularAsync(ModulePreparation.CreateDefault(),e.Args.Length==1?e.Args[0]:null);
+        await window.StartModularAsync(ModulePreparation.CreateDefault(),e.Args.Length==1?e.Args[0]:null,ModulePreparation.TryGetInstalledActiveAsync);
     }
     protected override void OnExit(ExitEventArgs e)
     {

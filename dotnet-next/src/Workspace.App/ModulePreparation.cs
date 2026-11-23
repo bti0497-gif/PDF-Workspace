@@ -28,6 +28,13 @@ internal static class ModulePreparation
                 async token=>{using var ownedClient=ModuleDistributionService.CreateDownloadClient();var current=new ModuleDistributionService(ownedClient,root,TrustedResourceHashes,VerifyEngineSignature,manifestSignaturePolicy:null);await current.RestoreActiveAsync(candidate,previous,token);});
         };
     }
+    internal static async Task<DistributionCandidate?> TryGetInstalledActiveAsync(CancellationToken ct = default)
+    {
+        var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Deojon", "PdfWorkspace.Wpf", "Modules");
+        using var client = ModuleDistributionService.CreateDownloadClient();
+        var service = new ModuleDistributionService(client, root, TrustedResourceHashes, VerifyEngineSignature, manifestSignaturePolicy: null);
+        return await service.GetActiveAsync(ct);
+    }
     internal static async Task<DistributionCandidate> PrepareActiveAsync(ModuleDistributionService service,IProgress<DistributionProgress>? progress,CancellationToken ct)
     {
         var result=await service.PrepareAsync(new("1.0.1"),progress,ct);

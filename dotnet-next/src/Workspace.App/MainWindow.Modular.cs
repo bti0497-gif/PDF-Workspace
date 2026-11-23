@@ -44,10 +44,34 @@ public partial class MainWindow
         Grid.SetRow(modularBody, 4); Grid.SetRowSpan(modularBody, 2); ShellRoot.Children.Add(modularBody);
     }
     // Preparation returns verified inert bytes. Runtime attachment must succeed before activation.
-    internal async Task StartModularAsync(Func<IProgress<DistributionProgress>, CancellationToken, Task<PreparedModuleUpdate>> prepare, string? initialPath = null)
+    internal async Task StartModularAsync(Func<IProgress<DistributionProgress>, CancellationToken, Task<PreparedModuleUpdate>> prepare, string? initialPath = null, Func<CancellationToken, Task<DistributionCandidate?>>? tryLoadInstalled = null)
     {
         prepareModules=prepare;
         StatusText.Text = "설치된 기능 버전을 확인하고 있습니다…";
+        if (tryLoadInstalled != null)
+        {
+            DistributionCandidate? installed = null;
+            try { installed = await tryLoadInstalled(CancellationToken.None); }
+            catch (Exception ex) { System.Diagnostics.Trace.TraceWarning("Installed module fast path skipped: " + ex.Message); }
+            if (installed != null)
+            {
+                try
+                {
+                    await AttachVerifiedModulesAsync(installed);
+                    CommitRunningCandidate(installed);
+                    StartBackgroundUpdates();
+                    _ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, new Action(() => _ = CheckModuleUpdatesAsync(silent: true)));
+                    if (initialPath != null) await sharedDocument!.DispatchAsync(new("document.open", Argument: initialPath));
+                    else await ShowStartupOpenAsync();
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Trace.TraceWarning("Fast attach failed, falling back to module preparation: " + ex.Message);
+                    await DisposeModularAsync();
+                }
+            }
+        }
         var progressModel = new ModuleSetupProgress();
         ModuleSetupWindow? setup = null;
         CancellationTokenSource? cancellation = null;
