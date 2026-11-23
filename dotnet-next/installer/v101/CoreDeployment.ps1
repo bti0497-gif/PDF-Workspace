@@ -89,8 +89,9 @@ function Check-Manifest([string]$Path,[switch]$Exact){
  if(!(Test-Path -LiteralPath $manifest)){throw 'Owned shell manifest missing; upgrade cannot safely proceed.'}
  $items=Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json;$names=New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
  foreach($f in $items){
-  if(!$f.path -or [IO.Path]::IsPathRooted($f.path) -or $f.path -match '(^|[\\/])\.\.?([\\/]|$)|[:\x00-\x1f]' -or !$names.Add($f.path)){throw 'Unsafe owned manifest.'}
-  $p=Join-Path $Path $f.path;Guard $p
+  $norm = if($f.path){$f.path -replace '/','\'} else {''}
+  if(!$norm -or [IO.Path]::IsPathRooted($norm) -or $norm -match '(^|[\\/])\.\.?([\\/]|$)|[:\x00-\x1f]' -or !$names.Add($norm)){throw 'Unsafe owned manifest.'}
+  $p=Join-Path $Path $norm;Guard $p
   if(!(Test-Path -LiteralPath $p -PathType Leaf) -or (Get-FileHash -LiteralPath $p).Hash -ne $f.sha256){throw 'Owned shell file changed or missing; no replacement allowed.'}
  }
  foreach($required in @('Workspace.App.exe','Workspace.App.dll')){if(!$names.Contains($required)){throw 'Required shell file missing from ownership manifest.'}}
